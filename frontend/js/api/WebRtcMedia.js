@@ -130,6 +130,7 @@ export class WebRtcMedia {
         this._audioRetryCleanup = null;
 
         // Callbacks — set by the caller
+        this.controllerOnly = false;
         this.onOpen = null; // All channels/tracks open
         this.onClose = null; // Disconnected / error
         this.onError = null; // Error event

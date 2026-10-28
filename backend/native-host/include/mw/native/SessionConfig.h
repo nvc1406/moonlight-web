@@ -157,6 +157,7 @@ struct SessionConfig
     /// Draw the mouse cursor into the captured frame. On by default: the remote
     /// user needs to see where they are pointing.
     bool captureCursor = true;
+    bool captureAudio = true;
 
     /// The client's display refresh, in millihertz, when the browser measured
     /// one. Zero means "unknown". Read together with clientVsync: a client

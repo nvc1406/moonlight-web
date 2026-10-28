@@ -668,6 +668,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
 
     if (media.type == MediaType::NativeHost) {
         auto* native = new NativeMediaEngine(this);
+        native->setControllerOnly(m_ControllerOnly);
         m_Engine = native;
 
         NativeMediaEngine::StartParams nativeParams;
@@ -721,6 +722,8 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         // The bench's knobs from the settings file, when someone added them.
         nativeParams.tuningSpec = m_NativeTuning;
         // A guest on the shared feed: the pictures come down its pipe.
+        nativeParams.controllerOnly = m_ControllerOnly;
+        nativeParams.captureAudio = m_CaptureAudio;
         nativeParams.feedPipe = m_FeedPipe;
         nativeParams.feedToken = m_FeedToken;
         nativeParams.feedSlot = m_FeedSlot;
@@ -1253,6 +1256,8 @@ void StreamSession::onShimConnectionStarted()
     // less delay, whereas a GameStream host gets them over its own protocol
     // and keeps the browser's frame-coalesced cadence.
     result["native"] = qobject_cast<NativeMediaEngine*>(m_Engine) != nullptr;
+    result["mode"] = m_ControllerOnly ? QStringLiteral("gamepad") : QStringLiteral("stream");
+    result["game_audio"] = m_CaptureAudio;
     // The virtual display drawn by another GPU than the display it replaced:
     // apps opened before the stream stay there, and the browser suggests
     // restarting one that stutters. Absent when the GPUs are the same.

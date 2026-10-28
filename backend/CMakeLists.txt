@@ -301,6 +301,8 @@ add_executable(mw-server
     src/server/HostAppLauncher.cpp
     src/server/LauncherDetect.cpp
     src/server/routes/ShareRoutes.cpp
+    src/server/routes/TouchRoutes.cpp
+    src/server/TouchProfiles.cpp
     src/server/routes/SystemRoutes.cpp
     src/server/routes/LogRoutes.cpp
     src/server/LogArchive.cpp

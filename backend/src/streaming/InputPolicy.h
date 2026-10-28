@@ -67,7 +67,7 @@ inline bool allowed(const QString& type, const Policy& p)
         type == QLatin1String("decodequeue") || type == QLatin1String("vsyncgrid") ||
         type == QLatin1String("fpsstep"))
         return true;
-    if (type == QLatin1String("inputstate")) return true;
+    if (type == QLatin1String("inputstate") || type == QLatin1String("gameaudio")) return true;
     return p.keyboardMouse; // key*, mouse*, wheel, textinput, locksync, clipboard
 }
 

@@ -52,6 +52,7 @@ import { HostListView } from './ui/HostListView.js';
 import { StreamView } from './ui/StreamView.js';
 import { lockLandscape } from './ui/StreamViewFullscreen.js';
 import { SettingsView } from './ui/SettingsView.js';
+import { chooseProfile, rememberedProfile } from './touch/profiles.js';
 import { AdminView } from './ui/AdminView.js';
 import { LoginView } from './ui/LoginView.js';
 import { SetupView } from './ui/SetupView.js';
@@ -501,7 +502,16 @@ export const MoonlightApp = {
             container,
             token,
             async (
-                { height, gaming, touchScreen, padKey },
+                {
+                    height,
+                    gaming,
+                    touchScreen,
+                    padKey,
+                    mode = 'stream',
+                    touchSource = false,
+                    profileId = '',
+                    audio,
+                },
                 transportIndex = 0,
                 codec,
                 rejoin = {},
@@ -522,6 +532,7 @@ export const MoonlightApp = {
                     codec,
                     udpBlocked,
                     rejoin.reconnectOf,
+                    { mode, profileId, audio },
                 );
                 // Left from the veil while the rejoin was on its way.
                 if (rejoin.aborted) {
@@ -557,6 +568,38 @@ export const MoonlightApp = {
                         sessionSlot: typeof result.slot === 'number' ? result.slot : 2,
                         playerMode: true,
                         shareToken: token,
+                        controllerOnly: mode === 'gamepad',
+                        touchSource,
+                        touchProfileId: profileId,
+                        gameAudio: audio,
+                        onModeChange: async (nextMode) => {
+                            const sessionInfo = await BackendClient.get(
+                                '/api/share/player/touch/session',
+                            );
+                            const selected = chooseProfile(
+                                sessionInfo.game,
+                                nextMode,
+                                rememberedProfile(sessionInfo.game, nextMode),
+                            );
+                            streamView.onQuit = null;
+                            await streamView.quit({ silent: true });
+                            this.streamView = null;
+                            try {
+                                await view.onJoin({
+                                    height,
+                                    gaming,
+                                    touchScreen,
+                                    padKey,
+                                    mode: nextMode,
+                                    touchSource: true,
+                                    profileId: selected.id,
+                                    audio: selected.audio,
+                                });
+                            } catch (error) {
+                                await view.refresh();
+                                Toast.error(error.message);
+                            }
+                        },
                         // One controller per invitation: the one picked on the
                         // join screen, when the invitation allows a gamepad.
                         gamepadAllowed: view.info.permissions?.gamepad === true,
@@ -595,12 +638,23 @@ export const MoonlightApp = {
                         // The guest loses 4:4:4 there as the owner does, and is
                         // told the same way.
                         if (streamView._yuv444) Toast.warning(t('launch.chroma444Fallback'));
-                        view.onJoin({ height, gaming, touchScreen, padKey }, at, 'h264').catch(
-                            (err) => {
-                                console.error('[MW] Guest codec fallback failed:', err);
-                                view.refresh();
+                        view.onJoin(
+                            {
+                                height,
+                                gaming,
+                                touchScreen,
+                                padKey,
+                                mode,
+                                touchSource,
+                                profileId,
+                                audio,
                             },
-                        );
+                            at,
+                            'h264',
+                        ).catch((err) => {
+                            console.error('[MW] Guest codec fallback failed:', err);
+                            view.refresh();
+                        });
                         return;
                     }
                     // Back to the join screen: the invitation outlives the stream.
@@ -629,7 +683,20 @@ export const MoonlightApp = {
                     this.streamView = null;
                     await streamView.quit({ silent: true, retire: true });
                     try {
-                        await view.onJoin({ height, gaming, touchScreen, padKey }, next, codec);
+                        await view.onJoin(
+                            {
+                                height,
+                                gaming,
+                                touchScreen,
+                                padKey,
+                                mode,
+                                touchSource,
+                                profileId,
+                                audio,
+                            },
+                            next,
+                            codec,
+                        );
                     } catch (err) {
                         console.error('[MW] Guest relaunch failed:', err);
                         view.refresh();
@@ -694,7 +761,16 @@ export const MoonlightApp = {
                     await streamView.quit({ silent: true, retire: true, takenOver: true });
                     try {
                         await view.onJoin(
-                            { height, gaming, touchScreen, padKey },
+                            {
+                                height,
+                                gaming,
+                                touchScreen,
+                                padKey,
+                                mode,
+                                touchSource,
+                                profileId,
+                                audio,
+                            },
                             at,
                             codec,
                             again,

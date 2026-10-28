@@ -85,6 +85,8 @@
 #include "server/routes/HostRoutes.h"
 #include "server/routes/HostAppRoutes.h"
 #include "server/routes/ShareRoutes.h"
+#include "server/routes/TouchRoutes.h"
+#include "server/TouchProfiles.h"
 #include "server/routes/SystemRoutes.h"
 #include "common/Logger.h"
 #include "common/LinuxCapabilities.h"
@@ -5202,6 +5204,8 @@ int main(int argc, char* argv[])
         return {name, !live};
     };
 
+    TouchProfiles touchProfiles(QFileInfo(appSettings.filePath()).absolutePath() +
+                                "/touch-profiles.json");
     ShareRoutesDeps shareDeps;
     shareDeps.joinTarget = joinTarget;
     shareDeps.statsReporting = [&appSettings]() { return appSettings.sessionMetricsAllowed(); };
@@ -5397,10 +5401,12 @@ int main(int argc, char* argv[])
                                    &g_PlayerUids, &g_PlayerJoiners, &cancelGuestHostSessionSoon,
                                    &dropPendingHostCancel, &releaseGuestHoleSoon, &keepGuestHole,
                                    &g_PlayerRetiring, &g_StreamEnds,
-                                   &sharedFeed](int slot, int height, QString aspect,
+                                   &sharedFeed, &touchProfiles](int slot, int height, QString aspect,
                                                 ShareManager::Permissions perms, QString serverHost,
                                                 int transportIndex, const HttpRequest& req,
                                                 ResponseCallback respond) {
+        const auto touchRequest = QJsonDocument::fromJson(req.body).object();
+        const bool controllerOnly = touchRequest["mode"].toString() == "gamepad";
         // The share is bound to ONE host at activation (ShareManager::activate).
         // A player is routed there and nowhere else — never to "whichever owner
         // slot is up", which is what let a link minted on one host reach a
@@ -5425,6 +5431,11 @@ int main(int argc, char* argv[])
             if (appId < 0) appId = g_LastOwnerAppId;
             ownerOnBoundHost = true;
         }
+        const auto selectedProfile = touchProfiles.profile(
+            hostUuid, touchProfiles.selectedApp(hostUuid, appId),
+            controllerOnly ? QStringLiteral("gamepad") : QStringLiteral("stream"),
+            touchRequest["profile_id"].toString());
+        const bool gameAudio = touchRequest["audio"].toBool(selectedProfile["audio"].toBool(!controllerOnly));
         NvComputer* host = computerManager.getHost(hostUuid);
         if (!host) {
             // The host this invitation was bound to is gone from the list.
@@ -5696,6 +5707,8 @@ int main(int argc, char* argv[])
         // host's session owns its pads and keeps the browser's numbers
         // (NativeMediaEngine::setControllerOffset).
         cfg["gamepadOffset"] = slot - kOwnerSlots + 1;
+        cfg["controllerOnly"] = controllerOnly;
+        cfg["captureAudio"] = gameAudio;
         QJsonArray chainArr;
         for (const QString& m : chain)
             chainArr.append(m);
@@ -5711,7 +5724,8 @@ int main(int argc, char* argv[])
         // other host, and a switch turned off, keeps the encoder per guest
         // exactly as it was. Joined once the display is there (below): the
         // feed's worker looks for it as it starts.
-        const bool feedWanted = host->backendType == NativeHostBackend::typeName() &&
+        const bool feedWanted = !controllerOnly &&
+                                host->backendType == NativeHostBackend::typeName() &&
                                 SharedFeed::enabled(appSettings.sharedFeedEnabled());
         SharedFeed::Spec feedSpec;
         if (feedWanted) {
@@ -5967,7 +5981,34 @@ int main(int argc, char* argv[])
             readyThenStart();
     };
 
+    shareDeps.guestController = [&computerManager](const QString& uuid) {
+#ifdef Q_OS_WIN
+        const auto* host = computerManager.getHost(uuid);
+        return host && host->backendType == NativeHostBackend::typeName();
+#else
+        Q_UNUSED(uuid);
+        return false;
+#endif
+    };
+    shareDeps.touchInfo = [&touchProfiles, &shareManager, &shareDeps](int slot) {
+        const QString host = shareManager.hostForSlot(slot);
+        const auto owner = shareDeps.currentOwnerContext();
+        const int app = touchProfiles.selectedApp(
+            host, owner.first == host ? owner.second : shareManager.appForSlot(slot));
+        return QJsonObject{
+            {"game", touchProfiles.game(host, app)},
+            {"revision", touchProfiles.document()["revision"]},
+            {"capabilities",
+             QJsonObject{{"gamepadMode", shareDeps.guestController(host)}, {"voice", true}}}};
+    };
+    shareDeps.validTouchProfile = [&touchProfiles, &shareDeps](int slot, const QJsonObject& body) {
+        const auto game = shareDeps.touchInfo(slot)["game"].toObject();
+        return touchProfiles.contains(game["host"].toString(), game["appId"].toInt(),
+                                      body["mode"].toString("stream"),
+                                      body["profile_id"].toString());
+    };
     registerShareRoutes(server, shareManager, shareDeps);
+    registerTouchRoutes(server, touchProfiles, shareManager, shareDeps);
 
     // Diagnostics: the browsers' console (debug mode) and the "Download logs"
     // archive. Static: its thread must be joined after the event loop, and

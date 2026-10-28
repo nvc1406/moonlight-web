@@ -191,6 +191,7 @@ public:
         /// Capture the host's audio. The feed worker does not: each guest's
         /// own worker captures it for its browser.
         bool captureAudio = true;
+        bool controllerOnly = false;
     };
 
     /// One encoded frame, borrowed: `data` is the encoder's own output buffer
@@ -283,6 +284,9 @@ public:
     /// only pushed a guest's second pad past that table, and sent its
     /// vibration back under a number its page does not have.
     void setControllerOffset(int) override {}
+    void setControllerOnly(bool only) { m_ControllerOnly = only; }
+    bool hasVideo() const override { return !m_ControllerOnly; }
+    void setGameAudioEnabled(bool enabled) override;
     void syncLockKeys(bool numLock, bool capsLock, bool scrollLock) override;
     void syncHeldInputs(const QVector<HeldKey>& keys, quint32 buttonMask,
                         bool buttonsHold) override;
@@ -534,6 +538,7 @@ private:
     /// and a pad update with everything at zero IS a neutralization.
     InputWatchdog* m_Watchdog = nullptr;
 
+    bool m_ControllerOnly = false;
     std::atomic<bool> m_Connected{false};
 
     /// Producer→consumer bookkeeping, mirroring MoonlightShim's so the relays'

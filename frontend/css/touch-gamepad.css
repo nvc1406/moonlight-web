@@ -1,0 +1,25 @@
+.touch-gamepad { position:absolute; inset:env(safe-area-inset-top,0) env(safe-area-inset-right,0) env(safe-area-inset-bottom,0) env(safe-area-inset-left,0); container-type:inline-size; pointer-events:auto; z-index:35; touch-action:none; user-select:none; }
+.touch-control { position:absolute; transform:translate(-50%,-50%); aspect-ratio:1; border-radius:50%; border:2px solid #d4e2f599; background:#17243d99; color:white; font:600 clamp(10px,2cqw,20px) system-ui; pointer-events:auto; touch-action:none; padding:0; min-width:0; display:grid; place-items:center; }
+.touch-control.pressed { background:#3b82f6; border-color:white; }
+.touch-stick { background:#11182788; }
+.touch-stick-cap { position:absolute; width:48%; height:48%; border-radius:50%; background:#b6cbe666; pointer-events:none; }
+.touch-hidden { opacity:.25; border-style:dashed; }
+.touch-toolbar { position:absolute; z-index:45; top:max(6px,env(safe-area-inset-top)); left:50%; transform:translateX(-50%); display:flex; flex-wrap:wrap; justify-content:center; gap:5px; max-width:95%; padding:6px; background:#101827dc; color:white; border-radius:10px; font:13px system-ui; }
+.touch-toolbar button,.touch-toolbar select { font:inherit; max-width:160px; padding:6px; background:#243552; color:white; border:1px solid #6984aa; border-radius:5px; }
+.touch-toolbar .touch-status { flex-basis:100%; text-align:center; font-size:11px; }
+.touch-controller-mode .stream-canvas-area { background:#111827; }
+.touch-controller-mode canvas,.touch-controller-mode video,.touch-controller-mode .stream-startup-overlay { visibility:hidden!important; }
+.touch-editor { position:fixed; inset:0; z-index:20000; background:#101827; color:white; overflow:auto; padding:18px; font:14px system-ui; }
+.touch-editor header { display:flex!important; position:static; gap:8px; flex-wrap:wrap; align-items:center; }
+.touch-editor button:not(.touch-control),.touch-editor select,.touch-editor input { padding:6px; margin:3px; background:#20304c; color:white; border:1px solid #687fa0; border-radius:4px; }
+.touch-editor-preview { position:relative; width:min(100%,1000px); aspect-ratio:16/9; background:#25334a; margin:16px auto; overflow:hidden; }
+.touch-editor-preview.portrait { width:min(70vw,360px); aspect-ratio:9/16; }
+.touch-editor-fields { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.touch-editor label { display:inline-flex; align-items:center; gap:4px; }
+.touch-editor [role=status] { min-height:24px; }
+
+.touch-toolbar:not(.is-open) > :not([data-action="menu"]):not(.touch-status) { display:none; }
+.touch-toolbar:not(.is-open) { max-width:46%; }
+.touch-toolbar.is-open { width:max-content; }
+
+.touch-editor select,.touch-editor input { max-width:100%; min-width:0; }

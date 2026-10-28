@@ -35,6 +35,7 @@ import {
     resolvePad,
     sourceBadge,
 } from './GamepadRemapDialog.js';
+import { chooseProfile, groupFor, rememberedProfile } from '../touch/profiles.js';
 import { padKey, padName, isAutoMapped } from '../stream/gamepadMapping.js';
 
 const HEIGHTS = [720, 1080, 1440];
@@ -77,7 +78,7 @@ export class PlayerJoinView {
     /**
      * @param {HTMLElement} container
      * @param {string} token the share token from the URL
-     * @param {(info: {height: number, gaming: boolean, touchScreen: boolean, padKey: string|null}, transportIndex?: number, codec?: string) => Promise<void>} onJoin
+     * @param {(info: {height: number, gaming: boolean, touchScreen: boolean, padKey: string|null, mode?: string, touchSource?: boolean, profileId?: string, audio?: boolean}, transportIndex?: number, codec?: string) => Promise<void>} onJoin
      */
     constructor(container, token, onJoin) {
         this.container = container;
@@ -414,6 +415,7 @@ export class PlayerJoinView {
                     </div>
                 </div>`
                 }
+                ${this.info.touch?.capabilities.gamepadMode && this._gamepadAllowed() ? `<div class="player-touch-options"><label>Mode <select data-touch-mode><option value="stream">Video + audio + gamepad</option>${this.info.touch.capabilities.gamepadMode ? '<option value="gamepad">Gamepad only</option>' : ''}</select></label><label>Input <select data-touch-source><option value="physical">Physical gamepad</option><option value="touch">On-screen gamepad</option></select></label><label>Profile <select data-touch-profile></select></label><label><input type="checkbox" data-touch-audio checked>Game audio</label></div>` : ''}
                 ${this._inputToggles()}
                 ${this._gamepadAllowed() ? '<div class="player-gamepad"></div>' : ''}
                 <button class="btn btn-open player-join-btn" type="button">
@@ -442,6 +444,46 @@ export class PlayerJoinView {
             });
         });
 
+        const modeSelect = /** @type {HTMLSelectElement} */ (
+            this.container.querySelector('[data-touch-mode]')
+        );
+        const profileSelect = /** @type {HTMLSelectElement} */ (
+            this.container.querySelector('[data-touch-profile]')
+        );
+        const sourceSelect = /** @type {HTMLSelectElement} */ (
+            this.container.querySelector('[data-touch-source]')
+        );
+        const audioCheck = /** @type {HTMLInputElement} */ (
+            this.container.querySelector('[data-touch-audio]')
+        );
+        const refreshProfiles = () => {
+            if (!modeSelect || !profileSelect) return;
+            const mode = modeSelect.value;
+            const game = this.info.touch.game;
+            const selected = chooseProfile(game, mode, rememberedProfile(game, mode));
+            const profiles = groupFor(game, mode).profiles;
+            profileSelect.replaceChildren(
+                ...(profiles.length ? profiles : [selected]).map((p) => {
+                    const option = document.createElement('option');
+                    option.value = p.id;
+                    option.textContent = p.name;
+                    option.selected = p.id === selected.id;
+                    return option;
+                }),
+            );
+            audioCheck.checked = selected.audio;
+            if (mode === 'gamepad') sourceSelect.value = 'touch';
+        };
+        modeSelect?.addEventListener('change', refreshProfiles);
+        profileSelect?.addEventListener('change', () => {
+            audioCheck.checked = chooseProfile(
+                this.info.touch.game,
+                modeSelect.value,
+                profileSelect.value,
+            ).audio;
+        });
+        if (sourceSelect && !navigator.getGamepads?.().some(Boolean)) sourceSelect.value = 'touch';
+        refreshProfiles();
         this._wireInputToggles();
 
         const refreshBtn = this.container.querySelector('.player-refresh');
@@ -454,7 +496,7 @@ export class PlayerJoinView {
         joinBtn.addEventListener('click', async () => {
             // An unknown controller is mapped first: the guest would otherwise
             // walk in with a pad the game never hears.
-            if (this._padNeedsMap()) {
+            if (sourceSelect?.value !== 'touch' && this._padNeedsMap()) {
                 this._openPadDialog(true);
                 return;
             }
@@ -476,6 +518,10 @@ export class PlayerJoinView {
                         : undefined;
                 await this.onJoin(
                     {
+                        mode: modeSelect?.value || 'stream',
+                        touchSource: sourceSelect?.value === 'touch',
+                        profileId: profileSelect?.value || '',
+                        audio: audioCheck ? audioCheck.checked : undefined,
                         height: this._height,
                         // No aspect: a guest cannot know the host's format, and
                         // its own monitor is irrelevant — the backend hands it the

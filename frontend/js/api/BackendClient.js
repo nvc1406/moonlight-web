@@ -612,9 +612,13 @@ export class BackendClient {
         transportIndex = 0,
         codec,
         udpBlocked,
-        reconnectOf,
+        reconnectOf = undefined,
+        touchOptions = {},
     ) {
         const body = aspect ? { token, height, aspect } : { token, height };
+        if (touchOptions.mode) body.mode = touchOptions.mode;
+        if (touchOptions.profileId) body.profile_id = touchOptions.profileId;
+        if (typeof touchOptions.audio === 'boolean') body.audio = touchOptions.audio;
         if (transportIndex > 0) body.transport_index = transportIndex;
         if (codec) body.codec = codec;
         if (udpBlocked) body.udp_blocked = true;

@@ -32,6 +32,10 @@ Dockerfile     text eol=lf
 *.mjs text eol=lf
 *.ts  text eol=lf
 
+# Integrity tests construct their own CRLF copy of the entry page.
+# Keep the source LF so Windows checkouts do not double its carriage returns.
+frontend/index.html text eol=lf
+
 # The lists of official interfaces are served as they are stored, and their
 # digests are checked byte for byte against what the release tags rebuild
 # (scripts/interface-list.mjs): LF everywhere.

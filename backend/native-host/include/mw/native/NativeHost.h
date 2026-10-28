@@ -264,6 +264,7 @@ public:
     /// Stop everything and join. Idempotent; safe from any thread; safe to call
     /// from inside a callback.
     virtual void stop() = 0;
+    virtual void setAudioEnabled(bool) {}
 
     /// What the engine actually settled on. Valid after a successful start().
     virtual const SessionInfo& info() const = 0;

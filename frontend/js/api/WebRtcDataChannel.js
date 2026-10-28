@@ -146,6 +146,7 @@ export class WebRtcDataChannel {
         this._defaultIceServers = defaultIceServers();
 
         // Callbacks — set by the caller
+        this.controllerOnly = false;
         this.onOpen = null; // All DataChannels open
         this.onClose = null; // Disconnected / error
         this.onError = null; // Error event
@@ -1020,8 +1021,10 @@ export class WebRtcDataChannel {
             ordered: true,
             maxPacketLifeTime: 500,
         };
-        this.dataChannels.video = this.pc.createDataChannel('video', videoInit);
-        this._setupDataChannel('video', this.dataChannels.video);
+        if (!this.controllerOnly) {
+            this.dataChannels.video = this.pc.createDataChannel('video', videoInit);
+            this._setupDataChannel('video', this.dataChannels.video);
+        }
 
         // NOTE: no audio DataChannel — audio is a native RTP Opus track now (id=1
         // is intentionally left unused so the input channel keeps its id=2,
@@ -1133,8 +1136,8 @@ export class WebRtcDataChannel {
         // Audio is an RTP track now (not a DataChannel) — only video + input gate
         // the "connected" state. The audio track flows over the same transport.
         return (
-            this.dataChannels.video &&
-            this.dataChannels.video.readyState === 'open' &&
+            (this.controllerOnly ||
+                (this.dataChannels.video && this.dataChannels.video.readyState === 'open')) &&
             this.dataChannels.input &&
             this.dataChannels.input.readyState === 'open'
         );

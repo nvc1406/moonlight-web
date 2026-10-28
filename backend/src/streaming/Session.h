@@ -342,6 +342,11 @@ public:
     /// sessions land on distinct virtual pads instead of all arriving as
     /// controller 0. Zero (the owner) keeps the browser's own numbering.
     void setGamepadOffset(int offset) { m_GamepadOffset = offset; }
+    void setControllerMode(bool only, bool audio)
+    {
+        m_ControllerOnly = only;
+        m_CaptureAudio = audio;
+    }
 
     /// The per-session key sent to the host as `rikey`. A backend that keys its
     /// own bookkeeping on the launch — Wolf indexes a session by client
@@ -526,6 +531,8 @@ private:
     /// Input restrictions for a shared session (see setInputPolicy).
     InputMsg::Policy m_InputPolicy;
     /// Controller-number offset for a shared session (see setGamepadOffset).
+    bool m_ControllerOnly = false;
+    bool m_CaptureAudio = true;
     int m_GamepadOffset = 0;
 
     /// Negotiated video format from drSetup (0=unknown, 0x0001=H.264, 0x0100=HEVC, 0x0200=AV1).

@@ -32,6 +32,9 @@ class HttpServer;
  */
 struct ShareRoutesDeps
 {
+    std::function<bool(const QString&)> guestController;
+    std::function<QJsonObject(int)> touchInfo;
+    std::function<bool(int, const QJsonObject&)> validTouchProfile;
     /// Start a player's stream on their slot. Answers with the same payload as
     /// POST /api/hosts/:id/start so the frontend reuses its pipeline verbatim.
     /// @p height is one of 720/1080/1440; @p aspect is the player's "W:H" screen

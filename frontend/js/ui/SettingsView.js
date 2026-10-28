@@ -27,6 +27,7 @@
  *   - Advanced section: video enhancement, codec, mute host, tearing,
  *     performance stats, gaming mode
  */
+import { ProfileEditor } from '../touch/ProfileEditor.js';
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { t, getLanguage, setLanguage, AVAILABLE_LANGUAGES } from '../i18n/i18n.js';
@@ -1766,6 +1767,7 @@ export class SettingsView {
                             title="${this.esc(t('common.close'))}">&times;</button>
                 </div>
 
+                <div class="settings-section"><button class="btn" id="touch-profile-editor">Game → Mode → Profile</button></div>
                 <!-- ── Video ─────────────────────────────────────────────── -->
                 <div class="settings-section">
                     <h3 class="settings-section-title">${t('settings.video')}</h3>
@@ -2157,6 +2159,11 @@ export class SettingsView {
     }
 
     bindEvents() {
+        this.container
+            .querySelector('#touch-profile-editor')
+            ?.addEventListener('click', () =>
+                ProfileEditor.open().catch((error) => Toast.error(error.message)),
+            );
         // Update: the section's body is repainted as the run goes, so the
         // button is reached through its section rather than bound itself.
         const updateSection = this.container.querySelector('#settings-section-update');

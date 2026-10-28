@@ -1221,7 +1221,7 @@ void DataChannelRelay::createDataChannels()
     // current. A lone loss on a healthy link still gets its fast retransmit
     // within a round trip, and one timer-driven retry inside the lifetime.
     // Before the first createDataChannel(), like the audio track (above).
-    createRtpVideoTracks();
+    if (m_Shim->hasVideo()) createRtpVideoTracks();
 
     // `rxbuf=` (plan « Gels du lien », point 1; the native host's default
     // since 20/10, rxbuf=0 takes it out): a video section nothing is ever
@@ -1233,7 +1233,7 @@ void DataChannelRelay::createDataChannels()
     // RTP video section, and nothing arrives there. Offered beside the bench's
     // RTP roads too: the audio road (PyroWave's) is an Opus track. H.264 and
     // VP8, so that every browser shares one (RxBufSection.h).
-    if (m_RxBufVideo) {
+    if (m_RxBufVideo && m_Shim->hasVideo()) {
         auto desc = rtc::Description::Video("rxbuf", rtc::Description::Direction::SendOnly);
         desc.addH264Codec(mw::rxbuf::kH264Pt);
         desc.addVP8Codec(mw::rxbuf::kVp8Pt);
@@ -1251,7 +1251,7 @@ void DataChannelRelay::createDataChannels()
     videoConfig.negotiated = true;
     videoConfig.id = 0;
 
-    m_VideoDc = m_Pc->createDataChannel("video", videoConfig);
+    if (m_Shim->hasVideo()) m_VideoDc = m_Pc->createDataChannel("video", videoConfig);
     if (m_VideoDc && m_FrameLog) {
         m_FrameLogDc = m_VideoDc;
         m_FrameLog->setBufferedProbe(
@@ -1959,6 +1959,10 @@ void DataChannelRelay::onInputMessage(const std::string& message, int64_t recvUs
         return;
     }
 
+    if (type == "gameaudio") {
+        m_Shim->setGameAudioEnabled(msg["enabled"].toBool());
+        return;
+    }
     if (type == "framefloor") {
         // How fast the client wants frames to keep coming while nothing on the
         // host's screen moves. It is the side that knows what its situation is

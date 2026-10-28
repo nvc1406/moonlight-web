@@ -345,84 +345,87 @@ void MediaTrackRelay::createTracksAndChannels()
     // H264RtpPacketizer with LongStartSequence handles Annex B -> RTP.
     // Payload type 96 (dynamic, standard for H.264 in WebRTC).
     {
-        auto videoDesc = rtc::Description::Video("video", rtc::Description::Direction::SendOnly);
-        videoDesc.addH264Codec(96); // Uses default profile: 42e01f, packetization-mode=1
+        if (m_Shim->hasVideo()) {
+            auto videoDesc =
+                rtc::Description::Video("video", rtc::Description::Direction::SendOnly);
+            videoDesc.addH264Codec(96); // Uses default profile: 42e01f, packetization-mode=1
 
-        // The SSRC has to be DECLARED in the media description, and before
-        // addTrack() — the description is what the PeerConnection turns into
-        // its ssrc→track routing table (updateTrackSsrcCache, built from the
-        // local description). An SSRC known only to the packetizer produces a
-        // stream the browser plays perfectly and whose RTCP feedback comes back
-        // to an address nobody claims: libdatachannel finds no track for it and
-        // drops it, silently, in both directions of usefulness.
-        //
-        // That is what made every NACK and every PLI a no-op here (2026-08-30:
-        // 63 NACKs and 6 PLIs from the receiver over one minute, not one of
-        // them reaching the RtcpNackResponder or the PliHandler chained below).
-        // With no retransmission and no keyframe on demand, a single lost
-        // packet froze the picture until the browser's own 2 s watchdog asked
-        // for an IDR over the DataChannel — the 2-4 s freezes, every 10-15 s.
-        std::random_device rd;
-        const uint32_t ssrc = static_cast<uint32_t>(rd());
-        videoDesc.addSSRC(ssrc, "video");
-
-        m_VideoTrack = m_Pc->addTrack(videoDesc);
-        if (m_VideoTrack) {
-            auto rtpConfig = std::make_shared<rtc::RtpPacketizationConfig>(
-                ssrc, "video", 96, rtc::H264RtpPacketizer::ClockRate);
-            auto packetizer = std::make_shared<rtc::H264RtpPacketizer>(
-                rtc::H264RtpPacketizer::Separator::LongStartSequence, rtpConfig);
-            // Chain: packetizer → RtcpNackResponder → PliHandler
+            // The SSRC has to be DECLARED in the media description, and before
+            // addTrack() — the description is what the PeerConnection turns into
+            // its ssrc→track routing table (updateTrackSsrcCache, built from the
+            // local description). An SSRC known only to the packetizer produces a
+            // stream the browser plays perfectly and whose RTCP feedback comes back
+            // to an address nobody claims: libdatachannel finds no track for it and
+            // drops it, silently, in both directions of usefulness.
             //
-            // The NACK history is the only thing standing between a lost RTP
-            // packet and a multi-second freeze: unlike the DataChannel path
-            // (SCTP retransmits and reorders for us), a gap the receiver cannot
-            // repair costs it every frame until the next keyframe.
-            //
-            // 128 packets was far too short. At 1080p60 / 20 Mbps the track
-            // pushes ~2000 packets per second, so the history covered ~60 ms —
-            // less than the receiver's own NACK batching delay plus the round
-            // trip, and nothing at all next to a Wi-Fi stall (a Mac whose radio
-            // is taken over by AWDL loses hundreds of packets and sees its RTT
-            // go 28→74 ms). Every such NACK arrived after the packet had been
-            // evicted, leaving the PLI/keyframe path as the only recovery.
-            //
-            // kVideoNackHistory covers ~0.5 s at that bitrate for ~1.2 MB per
-            // session, which is what libwebrtc's own send history is sized for.
-            static constexpr size_t kVideoNackHistory = 1024;
-            auto nackResponder = std::make_shared<rtc::RtcpNackResponder>(kVideoNackHistory);
-            packetizer->addToChain(nackResponder);
-            // PLI handler requests a keyframe from Sunshine on decoder PLI.
-            // Throttled with backoff: PLI storms during sustained loss must not
-            // flood Sunshine with IDR requests (each IDR inflates the bitrate).
-            auto pliHandler = std::make_shared<rtc::PliHandler>([this]() {
-                if (m_Shim && !m_Stopping.load()) {
-                    // A PLI is the receiver's decoder reporting it has nothing
-                    // to show. Until now this path logged nothing at all, so it
-                    // was impossible to tell a PLI that never arrived from one
-                    // the cooldown swallowed.
-                    if (++m_PliCount % 10 == 1)
-                        qInfo() << "[MediaTrackRelay] PLI from receiver — decoder lost its"
-                                << "reference (count:" << m_PliCount << ")";
-                    sendIdrRequestThrottled(true);
-                }
-            });
-            nackResponder->addToChain(pliHandler);
-            m_VideoTrack->setMediaHandler(packetizer);
+            // That is what made every NACK and every PLI a no-op here (2026-08-30:
+            // 63 NACKs and 6 PLIs from the receiver over one minute, not one of
+            // them reaching the RtcpNackResponder or the PliHandler chained below).
+            // With no retransmission and no keyframe on demand, a single lost
+            // packet froze the picture until the browser's own 2 s watchdog asked
+            // for an IDR over the DataChannel — the 2-4 s freezes, every 10-15 s.
+            std::random_device rd;
+            const uint32_t ssrc = static_cast<uint32_t>(rd());
+            videoDesc.addSSRC(ssrc, "video");
 
-            m_VideoTrack->onOpen([this]() {
-                qInfo() << "[MediaTrackRelay] Video Track open";
-                QMetaObject::invokeMethod(
-                    this, [this]() { sendBufferedKeyframe(); }, Qt::QueuedConnection);
-            });
-            m_VideoTrack->onClosed([this]() { qInfo() << "[MediaTrackRelay] Video Track closed"; });
+            m_VideoTrack = m_Pc->addTrack(videoDesc);
+            if (m_VideoTrack) {
+                auto rtpConfig = std::make_shared<rtc::RtpPacketizationConfig>(
+                    ssrc, "video", 96, rtc::H264RtpPacketizer::ClockRate);
+                auto packetizer = std::make_shared<rtc::H264RtpPacketizer>(
+                    rtc::H264RtpPacketizer::Separator::LongStartSequence, rtpConfig);
+                // Chain: packetizer → RtcpNackResponder → PliHandler
+                //
+                // The NACK history is the only thing standing between a lost RTP
+                // packet and a multi-second freeze: unlike the DataChannel path
+                // (SCTP retransmits and reorders for us), a gap the receiver cannot
+                // repair costs it every frame until the next keyframe.
+                //
+                // 128 packets was far too short. At 1080p60 / 20 Mbps the track
+                // pushes ~2000 packets per second, so the history covered ~60 ms —
+                // less than the receiver's own NACK batching delay plus the round
+                // trip, and nothing at all next to a Wi-Fi stall (a Mac whose radio
+                // is taken over by AWDL loses hundreds of packets and sees its RTT
+                // go 28→74 ms). Every such NACK arrived after the packet had been
+                // evicted, leaving the PLI/keyframe path as the only recovery.
+                //
+                // kVideoNackHistory covers ~0.5 s at that bitrate for ~1.2 MB per
+                // session, which is what libwebrtc's own send history is sized for.
+                static constexpr size_t kVideoNackHistory = 1024;
+                auto nackResponder = std::make_shared<rtc::RtcpNackResponder>(kVideoNackHistory);
+                packetizer->addToChain(nackResponder);
+                // PLI handler requests a keyframe from Sunshine on decoder PLI.
+                // Throttled with backoff: PLI storms during sustained loss must not
+                // flood Sunshine with IDR requests (each IDR inflates the bitrate).
+                auto pliHandler = std::make_shared<rtc::PliHandler>([this]() {
+                    if (m_Shim && !m_Stopping.load()) {
+                        // A PLI is the receiver's decoder reporting it has nothing
+                        // to show. Until now this path logged nothing at all, so it
+                        // was impossible to tell a PLI that never arrived from one
+                        // the cooldown swallowed.
+                        if (++m_PliCount % 10 == 1)
+                            qInfo() << "[MediaTrackRelay] PLI from receiver — decoder lost its"
+                                    << "reference (count:" << m_PliCount << ")";
+                        sendIdrRequestThrottled(true);
+                    }
+                });
+                nackResponder->addToChain(pliHandler);
+                m_VideoTrack->setMediaHandler(packetizer);
 
-            qInfo() << "[MediaTrackRelay] Video track created (H.264, PT=96)";
-        } else {
-            qWarning() << "[MediaTrackRelay] Failed to create video track";
+                m_VideoTrack->onOpen([this]() {
+                    qInfo() << "[MediaTrackRelay] Video Track open";
+                    QMetaObject::invokeMethod(
+                        this, [this]() { sendBufferedKeyframe(); }, Qt::QueuedConnection);
+                });
+                m_VideoTrack->onClosed(
+                    [this]() { qInfo() << "[MediaTrackRelay] Video Track closed"; });
+
+                qInfo() << "[MediaTrackRelay] Video track created (H.264, PT=96)";
+            } else {
+                qWarning() << "[MediaTrackRelay] Failed to create video track";
+            }
         }
     }
-
     // ── Audio track (Opus, server->browser, RTP) ───────────────────────────
     // Native RTP Opus track instead of a DataChannel: the browser decodes Opus
     // with its own jitter buffer + in-band FEC + packet loss concealment, so a
@@ -900,6 +903,8 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
         // The way out of a closed input gate — native host only, full
         // reasoning in DataChannelRelay's handler.
         if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim)) native->releaseInputBlock();
+    } else if (type == "gameaudio") {
+        m_Shim->setGameAudioEnabled(msg["enabled"].toBool());
     } else if (type == "framefloor") {
         // How fast the client wants frames while the host's screen is still —
         // native host only, full reasoning in DataChannelRelay's handler.

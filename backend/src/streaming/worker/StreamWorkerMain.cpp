@@ -661,6 +661,8 @@ int runStreamWorker(QCoreApplication& app)
     session->setGamescopeApp(cfg["gamescopeApp"].toString(), cfg["gamescopeCommand"].toString());
     session->setNativeVideoPipeline(cfg["nativeVideoPipeline"].toString());
     // Absent (an older parent, or no knob) → empty: the engine's own settings.
+    session->setControllerMode(cfg["controllerOnly"].toBool(false),
+                               cfg["captureAudio"].toBool(true));
     session->setNativeTuning(cfg["nativeTuning"].toString());
     session->setRtpVideo(cfg["rtpVideo"].toString());
     // A guest on the guests' shared feed: absent → this session captures.

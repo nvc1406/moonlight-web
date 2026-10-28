@@ -221,7 +221,7 @@ void NativeMediaEngine::startCapture(const StartParams& params)
 {
     // A guest on the shared feed captures nothing: its pictures come down the
     // feed's pipe, its session is input and audio.
-    if (!params.feedPipe.isEmpty()) {
+    if (params.controllerOnly || !params.feedPipe.isEmpty()) {
         startSubscriber(params);
         return;
     }
@@ -319,7 +319,8 @@ void NativeMediaEngine::startCapture(const StartParams& params)
     // audioSamplesPerFrame(), the frame the engine produces. None at all for the guests' feed,
     // whose guests each capture their own.
     mw::native::AudioCallback onAudio;
-    if (params.captureAudio) {
+    config.captureAudio = params.captureAudio;
+    {
         onAudio = [this](const mw::native::AudioPacket& packet) {
             if (!packet.data || packet.size == 0) return;
             noteAudioEmitted(packet);
@@ -465,40 +466,44 @@ void NativeMediaEngine::publishInfo()
 
 void NativeMediaEngine::startSubscriber(const StartParams& params)
 {
-    m_Subscriber =
-        std::make_unique<FeedSubscriber>(params.feedPipe, params.feedToken, params.feedSlot);
-    m_Subscriber->setFrameCallback([this](const mw::native::feed::Header& header,
-                                          const uint8_t* data,
-                                          size_t size) { onFeedFrame(header, data, size); });
-    // Emitted on the subscriber's thread; handled on this engine's.
-    connect(m_Subscriber.get(), &FeedSubscriber::controlReceived, this,
-            &NativeMediaEngine::onFeedControl, Qt::QueuedConnection);
-    connect(m_Subscriber.get(), &FeedSubscriber::disconnected, this, &NativeMediaEngine::onFeedLost,
-            Qt::QueuedConnection);
-    connect(m_Subscriber.get(), &FeedSubscriber::rejoined, this, &NativeMediaEngine::onFeedRejoined,
-            Qt::QueuedConnection);
-    m_FeedNeedsKeyframe.store(true, std::memory_order_release);
+    qInfo() << "[NativeMediaEngine] guest session: video=" << !params.controllerOnly
+            << "audio=" << params.captureAudio;
+    if (!params.controllerOnly) {
+        m_Subscriber =
+            std::make_unique<FeedSubscriber>(params.feedPipe, params.feedToken, params.feedSlot);
+        m_Subscriber->setFrameCallback([this](const mw::native::feed::Header& header,
+                                              const uint8_t* data,
+                                              size_t size) { onFeedFrame(header, data, size); });
+        // Emitted on the subscriber's thread; handled on this engine's.
+        connect(m_Subscriber.get(), &FeedSubscriber::controlReceived, this,
+                &NativeMediaEngine::onFeedControl, Qt::QueuedConnection);
+        connect(m_Subscriber.get(), &FeedSubscriber::disconnected, this,
+                &NativeMediaEngine::onFeedLost, Qt::QueuedConnection);
+        connect(m_Subscriber.get(), &FeedSubscriber::rejoined, this,
+                &NativeMediaEngine::onFeedRejoined, Qt::QueuedConnection);
+        m_FeedNeedsKeyframe.store(true, std::memory_order_release);
 
-    QJsonObject info;
-    QString why;
-    // The feed may be starting at this very moment (the first guest's join is
-    // what launches it): its pipe gets a few seconds to answer.
-    if (!m_Subscriber->start(8000, &info, &why) || !takeFeedInfo(info)) {
-        if (why.isEmpty()) why = QStringLiteral("the feed described no session");
-        qWarning() << "[NativeMediaEngine] cannot join the guests' shared feed:" << why;
-        m_Subscriber.reset();
-        emit connectionFailed(QStringLiteral("The shared stream is not answering: ") + why);
-        return;
+        QJsonObject info;
+        QString why;
+        // The feed may be starting at this very moment (the first guest's join is
+        // what launches it): its pipe gets a few seconds to answer.
+        if (!m_Subscriber->start(8000, &info, &why) || !takeFeedInfo(info)) {
+            if (why.isEmpty()) why = QStringLiteral("the feed described no session");
+            qWarning() << "[NativeMediaEngine] cannot join the guests' shared feed:" << why;
+            m_Subscriber.reset();
+            emit connectionFailed(QStringLiteral("The shared stream is not answering: ") + why);
+            return;
+        }
     }
-
     mw::native::SessionConfig config;
+    config.captureAudio = params.captureAudio;
     config.videoSource = mw::native::VideoSource::External;
     mw::native::SessionInfo feed;
     {
         std::lock_guard<std::mutex> lock(m_FeedMutex);
         feed = m_FeedInfo;
     }
-    config.displayId = feed.displayId;
+    config.displayId = params.controllerOnly ? params.displayId : feed.displayId;
     config.externalLeft = feed.desktopLeft;
     config.externalTop = feed.desktopTop;
     config.externalRight = feed.desktopRight;
@@ -535,7 +540,7 @@ void NativeMediaEngine::startSubscriber(const StartParams& params)
         qWarning() << "[NativeMediaEngine] could not start the guest's session:"
                    << QString::fromStdString(error);
         m_Session.reset();
-        m_Subscriber->stop();
+        if (m_Subscriber) m_Subscriber->stop();
         m_Subscriber.reset();
         emit connectionFailed(QString::fromStdString(error));
         return;
@@ -1583,4 +1588,9 @@ void NativeMediaEngine::releaseHeldInputs(bool includeHold)
 qint64 NativeMediaEngine::noteClientAlive()
 {
     return m_Watchdog->noteClientAlive();
+}
+
+void NativeMediaEngine::setGameAudioEnabled(bool enabled)
+{
+    if (m_Session) m_Session->setAudioEnabled(enabled);
 }

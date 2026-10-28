@@ -577,7 +577,8 @@ public:
     /// all still streams its screen.
     void startAudio()
     {
-        if (m_Callbacks.onAudio) {
+        std::lock_guard<std::mutex> lock(m_AudioMutex);
+        if (m_Callbacks.onAudio && m_Config.captureAudio && !m_Audio) {
             // Before the loopback opens: the mute may move the default output
             // to a device without speakers, and the capture must open on THAT
             // one. Best effort, and said in the log either way — a machine
@@ -602,6 +603,19 @@ public:
         }
     }
 
+    void setAudioEnabled(bool enabled) override
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_AudioMutex);
+            m_Config.captureAudio = enabled;
+            if (!enabled) {
+                m_Audio.reset();
+                m_HostMute.release();
+            }
+        }
+        if (enabled) startAudio();
+    }
+
     void stop() override
     {
         // Idempotent, and safe from inside a callback: the flag is checked by
@@ -622,7 +636,10 @@ public:
         }
         // Joins the audio thread; its last packet has been delivered when this
         // returns, so the consumer can be torn down after us.
-        m_Audio.reset();
+        {
+            std::lock_guard<std::mutex> lock(m_AudioMutex);
+            m_Audio.reset();
+        }
         // After the loopback is closed: the speakers come back, or the default
         // output goes back to where it was.
         m_HostMute.release();
@@ -4710,6 +4727,7 @@ private:
 
     /// Optional too: the host's playback, captured and encoded on its own
     /// thread. Null when the consumer asked for none or no device could open.
+    std::mutex m_AudioMutex;
     std::unique_ptr<audio::WasapiLoopback> m_Audio;
     audio::HostMute m_HostMute;
 

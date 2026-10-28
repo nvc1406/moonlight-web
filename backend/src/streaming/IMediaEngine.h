@@ -506,6 +506,10 @@ signals:
     /// own codec fallback does.
     void sharedFeedCodecChanged(QString codec);
 
+public:
+    virtual void setGameAudioEnabled(bool) {}
+    virtual bool hasVideo() const { return true; }
+
 protected:
     /// Written once by the session thread at stream start, read on every
     /// keystroke by whichever thread owns the input channel — hence atomic.

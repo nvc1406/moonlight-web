@@ -726,6 +726,8 @@ void StreamRelay::onWsTextMessage(const QString& message)
         // browser was drawing its own on, and the viewer saw two.
         if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim))
             native->setCompositeCursor(msg["composite"].toBool(true), msg["cursorPx"].toInt(0));
+    } else if (type == "gameaudio") {
+        m_Shim->setGameAudioEnabled(msg["enabled"].toBool());
     } else if (type == "framefloor") {
         // How fast the client wants frames while the host's screen is still —
         // native host only, full reasoning in DataChannelRelay's handler.

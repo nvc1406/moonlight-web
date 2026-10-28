@@ -1,3 +1,6 @@
+# Local SDKs installed for development builds
+/.build-tools/
+
 # Qt/C++ build artifacts
 build/
 build-*/

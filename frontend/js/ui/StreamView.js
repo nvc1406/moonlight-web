@@ -38,6 +38,7 @@ import {
 } from '../util/RefreshRate.js';
 import { devicePixelSize } from '../util/StreamResolution.js';
 import { PeriodicStallDetector } from '../stream/PeriodicStallDetector.js';
+import { TouchControls } from '../touch/TouchControls.js';
 import { GamepadManager } from '../stream/GamepadManager.js';
 import { HidPassthrough } from '../hid/HidPassthrough.js';
 import { GamepadRemapDialog } from './GamepadRemapDialog.js';
@@ -538,6 +539,9 @@ export class StreamView {
         opts = {},
     ) {
         this.container = container;
+        this._controllerOnly = opts.controllerOnly === true;
+        this._touchOptions = opts;
+        this._touchControls = null;
         // ── Standby mode (seamless quality switching) ───────────────────────
         // A standby view connects, decodes and renders HIDDEN and MUTED next to
         // the live one; input/wake-lock/overlays stay off until activate() flips
@@ -2621,7 +2625,8 @@ export class StreamView {
                 if (!this._kbdVisible) return;
                 const t = e.target;
                 if (t === this._kbdCapture) return;
-                if (t && t.closest && t.closest('.stream-header')) return;
+                if (t && t.closest && t.closest('.stream-header, .touch-toolbar, .touch-editor'))
+                    return;
                 // Same exemption for the input-gate strip: its button is the
                 // only way out of a session where nothing else responds, and
                 // preventDefault here would swallow the tap that opens it.
@@ -2817,6 +2822,7 @@ export class StreamView {
     }
 
     setupDecoder() {
+        if (this._controllerOnly) return;
         if (this.decoder) {
             console.log('[StreamView] Closing existing decoder');
             try {
@@ -5287,6 +5293,7 @@ export class StreamView {
     // =========================================================================
 
     setupWebRtc() {
+        if ('controllerOnly' in this.webrtc) this.webrtc.controllerOnly = this._controllerOnly;
         this.webrtc.onOpen = () => {
             // _manualQuitting: Stop pressed while connecting — don't spin up the
             // decoder/renderer, quit() is about to tear everything down.
@@ -5295,8 +5302,18 @@ export class StreamView {
             // Transport established at least once → past the connection-failure
             // window. Later failures are mid-stream disconnects, not fallbacks.
             this._everConnected = true;
-            this.setStatus('connecting', 'Waiting for stream...');
-            this._updateStartupStep(2);
+            if (this._controllerOnly) {
+                this._firstFrameRendered = true;
+                this._rootEl.classList.add('touch-controller-mode');
+                if (this._startupOverlay) this._startupOverlay.style.display = 'none';
+                this.setStatus('connected', 'Gamepad connected');
+            } else this.setStatus('connecting', 'Waiting for stream...');
+            this._updateStartupStep(this._controllerOnly ? 3 : 2);
+            if (this._controllerOnly) {
+                this._hideStartupOverlay();
+                this._revealStreamControls();
+                if (typeof this.onFirstFrame === 'function') this.onFirstFrame();
+            }
 
             // No-video watchdog: transport up but nothing ever rendered — the
             // decode/render path is broken on this transport (not the network),
@@ -5305,7 +5322,13 @@ export class StreamView {
             // sitting on the "Waiting for stream" overlay forever.
             if (this._noVideoTimer) clearTimeout(this._noVideoTimer);
             this._noVideoTimer = setTimeout(() => {
-                if (this._firstFrameRendered || this._quitting || this._manualQuitting) return;
+                if (
+                    this._controllerOnly ||
+                    this._firstFrameRendered ||
+                    this._quitting ||
+                    this._manualQuitting
+                )
+                    return;
                 const webcodecs = this._transport !== 'webrtc-media';
                 const reason =
                     webcodecs && this.stats.decoded === 0 ? 'decoder_unsupported' : 'no_video';
@@ -5423,10 +5446,23 @@ export class StreamView {
                 this._gamepadManager.setPaused(true);
             }
             // Standby: created but not polling — started in activate().
-            if (this._gamepadManager && !this._standby) this._gamepadManager.start();
+            if (
+                this._gamepadManager &&
+                !this._standby &&
+                !this._touchOptions.touchSource &&
+                !(this._controllerOnly && this._touchOptions.touchSource !== false)
+            )
+                this._gamepadManager.start();
+            if (!this._touchControls && !this._standby && this._touchOptions.nativeHost) {
+                this._touchControls = new TouchControls(this, this._touchOptions);
+                this._touchControls
+                    .start()
+                    .catch((error) => console.warn('[Touch controls]', error));
+            }
 
             // The audio track's playout buffer, on either WebRTC transport.
             this._startAudioStatsPolling();
+            if (this._controllerOnly) return;
             // What this receiver sees of the link, for the native host's rate
             // governor (DataChannel transport; the media transport reports its
             // RTP counters through clientstats instead).
@@ -9573,6 +9609,8 @@ export class StreamView {
     }
 
     unbindEvents() {
+        this._touchControls?.destroy();
+        this._touchControls = null;
         if (this._gamepadManager) this._gamepadManager.stop();
         if (this._hidPassthrough) {
             this._hidPassthrough.stop();

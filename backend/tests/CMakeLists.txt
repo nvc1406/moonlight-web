@@ -58,6 +58,8 @@ add_executable(run_tests
     test_input_crypto.cpp
     test_rest_router.cpp
     test_app_settings.cpp
+    test_touch_profiles.cpp
+    ${_src}/src/server/TouchProfiles.cpp
     test_launcher_detect.cpp
     test_host_app_image.cpp
     test_log_archive.cpp

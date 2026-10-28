@@ -17,6 +17,7 @@ void run_stream_config_tests();
 void run_input_crypto_tests();
 void run_rest_router_tests();
 void run_app_settings_tests();
+void run_touch_profiles_tests();
 void run_launcher_detect_tests();
 void run_host_app_image_tests();
 void run_log_archive_tests();
@@ -91,6 +92,7 @@ int main(int argc, char** argv)
     run_input_crypto_tests();
     run_rest_router_tests();
     run_app_settings_tests();
+    run_touch_profiles_tests();
     run_launcher_detect_tests();
     run_host_app_image_tests();
     run_log_archive_tests();

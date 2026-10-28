@@ -480,6 +480,7 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
         }
 
         const ShareManager::Permissions perms = share.permissions(slot);
+        if (deps.touchInfo) obj["touch"] = deps.touchInfo(slot);
         obj[QStringLiteral("needs_pin")] = false;
         obj[QStringLiteral("machine_name")] = deps.machineName ? deps.machineName() : QString();
         obj[QStringLiteral("state")] = stateName(share.state(slot));
@@ -525,6 +526,21 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
                 QJsonObject obj;
                 obj[QStringLiteral("error")] = QStringLiteral("dead_link");
                 respond(HttpResponse::json(obj, 403));
+                return;
+            }
+
+            const QString mode = body.value("mode").toString("stream");
+            if (mode != "stream" && mode != "gamepad") {
+                respond(HttpResponse::error(400, "Unknown mode"));
+                return;
+            }
+            if (mode == "gamepad" && (!share.permissions(slot).gamepad || !deps.guestController ||
+                                      !deps.guestController(share.hostForSlot(slot)))) {
+                respond(HttpResponse::error(403, "Gamepad mode unavailable"));
+                return;
+            }
+            if (deps.validTouchProfile && !deps.validTouchProfile(slot, body)) {
+                respond(HttpResponse::error(400, "Profile does not belong to this game and mode"));
                 return;
             }
 
