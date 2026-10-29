@@ -31,10 +31,12 @@
 
 const STORAGE_KEY = 'mw-lang';
 const FALLBACK_LANG = 'en';
+const DEFAULT_LANG = 'vi';
 
 // Languages exposed in the UI selector. Add an entry + a locales/<code>.json
 // file to ship a new language — nothing else to wire.
 export const AVAILABLE_LANGUAGES = [
+    { code: 'vi', label: 'Tiếng Việt' },
     { code: 'en', label: 'English' },
     { code: 'fr', label: 'Français' },
     { code: 'zh', label: '简体中文' },
@@ -47,11 +49,7 @@ const state = {
 };
 
 /**
- * Pick the initial language: stored choice → browser preferences → English.
- *
- * Browser preferences are read from `navigator.languages` (the user's ordered
- * list, e.g. ["fr-FR", "fr", "en-US"]) and we take the first entry whose base
- * language ("fr-FR" → "fr") we actually ship. Falls back to English.
+ * Use the saved language, or Vietnamese for a new browser.
  */
 function detectLanguage() {
     const supported = (code) => AVAILABLE_LANGUAGES.some((l) => l.code === code);
@@ -59,15 +57,7 @@ function detectLanguage() {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored && supported(stored)) return stored;
 
-    const prefs =
-        navigator.languages && navigator.languages.length
-            ? navigator.languages
-            : [navigator.language || ''];
-    for (const tag of prefs) {
-        const base = tag.slice(0, 2).toLowerCase();
-        if (supported(base)) return base;
-    }
-    return FALLBACK_LANG;
+    return DEFAULT_LANG;
 }
 
 async function fetchLocale(code) {

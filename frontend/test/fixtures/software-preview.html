@@ -1,0 +1,18 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Software and remote clients preview</title>
+<link rel="stylesheet" href="/css/tokens.css"><link rel="stylesheet" href="/css/base.css"><link rel="stylesheet" href="/css/components.css"><link rel="stylesheet" href="/css/views/settings.css"><link rel="stylesheet" href="/css/views/admin.css">
+<style>body{padding:24px;overflow:auto}main{max-width:1000px;margin:auto}.settings-section{margin-bottom:24px}</style>
+<main><p>Local visual fixture · sample client data</p><div id="apps"></div><div class="settings-section"><h3>Remote clients</h3><div id="admin-sessions-table"></div></div></main>
+<script type="module">
+import {init} from '/js/i18n/i18n.js';
+import {AdminView} from '/js/ui/AdminView.js';
+import {BackendClient} from '/js/api/BackendClient.js';
+await init();
+const app={id:'demo',app_id:42,name:'Moving Out',command:'"C:\\Games\\Moving Out\\MovingOut.exe"'};
+BackendClient.get=async path=>path.startsWith('/api/host-apps/browse')?{path:'C:/Games',parent:'C:/',entries:[{name:'MovingOut.exe',path:'C:/Games/MovingOut.exe',directory:false},{name:'Steam',path:'C:/Games/Steam',directory:true}]}:{version:1,revision:0,games:[]};
+BackendClient.post=async(path)=>path.endsWith('/browse')?{path:'C:/Games',parent:'C:/',entries:[{name:'MovingOut.exe',path:'C:/Games/MovingOut.exe',directory:false}]}:({name:'MovingOut',command:'"C:\\Games\\MovingOut.exe"'});
+BackendClient.getHosts=async()=>({hosts:[{uuid:'moonlightweb-native-host',name:'This PC',backendType:'native'}]});
+BackendClient.getAppList=async()=>({apps:[{id:42,name:'Moving Out'}]});
+const view=new AdminView(document.body,()=>{});
+view._hostApps=[app];view._hostAppsSupported=true;document.querySelector('#apps').innerHTML=view._renderHostApps();view._bindHostApps();
+view._sessions=[{token:'demo1',machine_name:'iPhone',streaming:true,remote_mode:'gamepad',remote_started_at:1793241000},{token:'demo2',machine_name:'Laptop',remote_mode:'stream',remote_started_at:1793238000,remote_ended_at:1793240000},{token:'guest-1',guest:true,machine_name:'Player 2',streaming:true,remote_mode:'stream',remote_started_at:1793241100}];view._renderSessionsTable();
+</script></html>

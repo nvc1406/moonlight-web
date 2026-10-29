@@ -8,6 +8,7 @@
  */
 #include "test_framework.h"
 #include "server/RequestGuard.h"
+#include "server/ClientTestMode.h"
 
 namespace {
 
@@ -26,6 +27,44 @@ Headers hdr(std::initializer_list<std::pair<const char*, const char*>> items)
 
 void run_request_guard_tests()
 {
+    SECTION("Client test — cookie isolation and no automatic admin grants");
+    {
+        HttpRequest req;
+        req.method = "GET";
+        req.path = "/client-test/api/auth/status";
+        req.headers["host"] = "localhost";
+        req.headers["cookie"] = "mw_session=admin-token; mw_test_client_session=client-token; other=ok";
+        ClientTestMode::prepare(req);
+        CHECK(req.testClient);
+        CHECK_EQ(req.path, QString("/api/auth/status"));
+        CHECK_EQ(req.headers["cookie"], QString("mw_session=client-token; other=ok"));
+        ClientTestMode::prepare(req);
+        CHECK_EQ(req.headers["cookie"], QString("mw_session=client-token; other=ok"));
+        RequestGuard::Context ctx;
+        ctx.peerLocal = ctx.hostSession = ctx.adminSession = ctx.adminKeyOk = true;
+        auto decision = RequestGuard::evaluate(RequestGuard::describe(req), ctx);
+        CHECK(decision.outcome == RequestGuard::Outcome::Allow);
+        CHECK(!decision.localPrivilege);
+        CHECK(!decision.hostMachine);
+        CHECK(!decision.adminPrivilege);
+        HttpResponse login;
+        login.headers["Set-Cookie"] = "mw_session=new; HttpOnly; Secure; Path=/; SameSite=Strict";
+        CHECK_EQ(ClientTestMode::response(login).headers["Set-Cookie"],
+                 QString("mw_test_client_session=new; HttpOnly; Secure; Path=/client-test/; SameSite=Strict"));
+        login.headers["Set-Cookie"] = "mw_session=; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=0";
+        CHECK(ClientTestMode::response(login).headers["Set-Cookie"].startsWith("mw_test_client_session=;"));
+        HttpRequest normal;
+        normal.path = "/api/auth/status";
+        normal.headers["cookie"] = "mw_session=admin-token";
+        ClientTestMode::prepare(normal);
+        CHECK(!normal.testClient);
+        CHECK_EQ(normal.headers["cookie"], QString("mw_session=admin-token"));
+        HttpRequest fresh;
+        fresh.path = "/client-test/api/auth/status";
+        fresh.headers["cookie"] = "mw_session=admin-token";
+        ClientTestMode::prepare(fresh);
+        CHECK(fresh.headers["cookie"].isEmpty());
+    }
     SECTION("RequestGuard — authority normalization");
 
     using namespace RequestGuard;

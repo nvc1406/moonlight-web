@@ -1,7 +1,8 @@
 {
     "name": "MoonlightWeb",
     "short_name": "MoonlightWeb",
-    "description": "Stream your gaming PC to any browser",
+    "description": "Stream PC chơi game đến mọi trình duyệt",
+    "lang": "vi",
     "start_url": "/",
     "scope": "/",
     "display": "fullscreen",

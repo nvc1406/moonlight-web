@@ -2944,6 +2944,9 @@ int main(int argc, char* argv[])
             QJsonObject{{"state", StreamEnds::name(asker ? e.state : StreamEnds::State::Unknown)}});
     });
 
+    TouchProfiles touchProfiles(QFileInfo(appSettings.filePath()).absolutePath() +
+                                "/touch-profiles.json");
+
     // Phase 5: Start streaming — launch app + RTSP handshake
     server.router()->postAsync("/api/hosts/:id/start", [&computerManager, signalingPort,
                                                         &g_ActiveRelay, &g_ActiveStreamRelay,
@@ -2959,7 +2962,7 @@ int main(int argc, char* argv[])
                                                         &slotWsPath, &anyOtherSlotLive,
                                                         &reapCoopSession, &server, &appSettings,
                                                         &authManager, &sessionMetrics, &routerPorts,
-                                                        stunServer](const HttpRequest& req,
+                                                        &touchProfiles, stunServer](const HttpRequest& req,
                                                                     ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) {
@@ -3022,6 +3025,28 @@ int main(int argc, char* argv[])
             backendResumable = probe->capabilities().resumableApps;
             backendType = probe->type();
         }
+        const QString touchMode = body["mode"].toString("stream");
+        const bool controllerOnly = touchMode == "gamepad";
+        const bool touchRequested = body.contains("mode");
+        bool nativeTouchSupported = false;
+#ifdef Q_OS_WIN
+        nativeTouchSupported = backendType == NativeHostBackend::typeName();
+#endif
+        if (touchRequested && (!nativeTouchSupported ||
+                               (touchMode != "stream" && touchMode != "gamepad"))) {
+            respond(HttpResponse::error(400, "Unsupported touch mode"));
+            return;
+        }
+        const int touchApp = touchProfiles.selectedApp(uuid, body["appId"].toInt());
+        if (touchRequested && !touchProfiles.contains(uuid, touchApp, touchMode,
+                                                      body["profile_id"].toString())) {
+            respond(HttpResponse::error(400, "Profile does not belong to game/mode"));
+            return;
+        }
+        const auto touchProfile = touchProfiles.profile(uuid, touchApp, touchMode,
+                                                        body["profile_id"].toString());
+        const bool gameAudio = !touchRequested || body["audio"].toBool(touchProfile["audio"].toBool());
+
         // The viewer's "Quit the app when the stream stops" setting (it rides
         // along with the other streaming settings): this stream ending on its
         // own then still closes the app, as it always did.
@@ -3029,6 +3054,10 @@ int main(int argc, char* argv[])
         // The pool stores the raw request value, so compare against the same.
         const QString reqDevice = body["client_uniqueid"].toString();
         const int reqAppId = body["appId"].toInt(0);
+        if (!req.isLocal && !appSettings.clientAppAllowed(uuid, reqAppId)) {
+            respond(HttpResponse::error(403, "App not allowed for clients"));
+            return;
+        }
         auto slotHeldByAnotherDevice = [&](int i) {
             return backendIsMultiUser && g_Pool.live(i) && g_Pool.at(i).hostUuid == uuid &&
                    !g_Pool.at(i).clientUniqueId.isEmpty() &&
@@ -3613,13 +3642,13 @@ int main(int argc, char* argv[])
                 s, &StreamSession::streamRelayCreated,
                 [&g_ActiveStreamRelay, &g_ActiveRelayRoot, &g_ActiveClientUniqueId,
                  &g_ActiveHostUuid, &computerManager, &authManager, sessionToken, host,
-                 quitUid](StreamRelay* r) {
+                 quitUid, touchMode](StreamRelay* r) {
                     qInfo() << "[main] streamRelayCreated, relay=" << r;
                     g_ActiveStreamRelay = r;
                     g_ActiveRelayRoot = r;
                     g_ActiveClientUniqueId = quitUid;
                     g_ActiveHostUuid = host->uuid;
-                    authManager.setSessionStreaming(sessionToken, true);
+                    authManager.setSessionStreaming(sessionToken, true, touchMode);
 
                     // Context = qApp so the lambda runs on the main thread: the relay
                     // emits sessionEnded from its dedicated thread, but quitAppAsync()
@@ -3657,13 +3686,13 @@ int main(int argc, char* argv[])
             QObject::connect(
                 s, &StreamSession::relayCreated,
                 [&g_ActiveRelay, &g_ActiveRelayRoot, &g_ActiveClientUniqueId, &g_ActiveHostUuid,
-                 &computerManager, &authManager, sessionToken, host, quitUid](DataChannelRelay* r) {
+                 &computerManager, &authManager, sessionToken, host, quitUid, touchMode](DataChannelRelay* r) {
                     qInfo() << "[main] relayCreated, relay=" << r;
                     g_ActiveRelay = r;
                     g_ActiveRelayRoot = r;
                     g_ActiveClientUniqueId = quitUid;
                     g_ActiveHostUuid = host->uuid;
-                    authManager.setSessionStreaming(sessionToken, true);
+                    authManager.setSessionStreaming(sessionToken, true, touchMode);
 
                     // Context = qApp: see StreamRelay note above (run on main thread).
                     QObject::connect(
@@ -3702,13 +3731,13 @@ int main(int argc, char* argv[])
                 s, &StreamSession::mediaTrackRelayCreated,
                 [&g_ActiveMediaTrackRelay, &g_ActiveRelayRoot, &g_ActiveClientUniqueId,
                  &g_ActiveHostUuid, &computerManager, &authManager, sessionToken, host,
-                 quitUid](MediaTrackRelay* r) {
+                 quitUid, touchMode](MediaTrackRelay* r) {
                     qInfo() << "[main] mediaTrackRelayCreated, relay=" << r;
                     g_ActiveMediaTrackRelay = r;
                     g_ActiveRelayRoot = r;
                     g_ActiveClientUniqueId = quitUid;
                     g_ActiveHostUuid = host->uuid;
-                    authManager.setSessionStreaming(sessionToken, true);
+                    authManager.setSessionStreaming(sessionToken, true, touchMode);
 
                     // Context = qApp: see StreamRelay note above (run on main thread).
                     QObject::connect(
@@ -3820,6 +3849,7 @@ int main(int argc, char* argv[])
                     s->setGamescopeApp(gsName, gsCommand);
             }
             // The admin's picture chain for a native Windows session.
+            s->setControllerMode(controllerOnly, gameAudio);
             s->setNativeVideoPipeline(appSettings.nativeVideoPipeline());
             // The bench's knobs, when someone added them to the settings file.
             s->setNativeTuning(nativeTuningSpec);
@@ -3893,6 +3923,8 @@ int main(int argc, char* argv[])
             // certificate have to travel with it.
             cfg["hostPairState"] = NvComputer::pairStateToString(host->pairState);
             cfg["hostServerCert"] = QString::fromUtf8(host->serverCertPem);
+            cfg["controllerOnly"] = controllerOnly;
+            cfg["captureAudio"] = gameAudio;
             cfg["appId"] = appId;
             cfg["codec"] = static_cast<int>(effectiveCodec);
             cfg["codecOverridden"] = codecOverridden;
@@ -4116,7 +4148,7 @@ int main(int argc, char* argv[])
                 worker, &StreamWorkerHost::responseReady, qApp,
                 [respond, worker, &g_Pool, &g_DualSupport, &g_SingleSessionHosts,
                  &g_LiveSunshineUids, &g_StreamEnds, &authManager, &sessionMetrics, sessionFacts,
-                 sessionStartedAt, reqSlot, standby, hostUuidCopy, uid, sessionToken, streamId,
+                 sessionStartedAt, reqSlot, standby, hostUuidCopy, uid, sessionToken, streamId, touchMode,
                  hostAppCommand, hostAppOnVirtual, hostAppCloseCommand,
                  hostAppStillOpen](int code, QJsonObject bodyObj) {
                     const bool ok =
@@ -4142,7 +4174,7 @@ int main(int argc, char* argv[])
                         bodyObj["stream_id"] = streamId;
                         g_StreamEnds.begin(streamId, hostUuidCopy, reqSlot, uid, sessionToken,
                                            QDateTime::currentMSecsSinceEpoch());
-                        authManager.setSessionStreaming(sessionToken, true);
+                        authManager.setSessionStreaming(sessionToken, true, touchMode);
                         g_LiveSunshineUids.insert(uid);
                         // A successful standby launch IS the capability probe.
                         if (standby) g_DualSupport[hostUuidCopy] = true;
@@ -4715,6 +4747,19 @@ int main(int argc, char* argv[])
                 respond(HttpResponse::error(404, "Host not found"));
                 return;
             }
+            if (!req.isLocal) {
+                const auto token = HttpServer::sessionTokenFromRequest(req);
+                bool owned = false;
+                for (int i = 0; i < kOwnerSlots; ++i) {
+                    const auto& sl = g_Pool.at(i);
+                    if (sl.worker && sl.hostUuid == uuid && !token.isEmpty() && sl.sessionToken == token)
+                        owned = true;
+                }
+                if (!owned) {
+                    respond(HttpResponse::error(403, "No active stream owned by this client"));
+                    return;
+                }
+            }
             qInfo() << "[quit] Host found:" << host->name << host->activeAddress.address() << ":"
                     << host->activeHttpsPort;
 
@@ -5204,8 +5249,6 @@ int main(int argc, char* argv[])
         return {name, !live};
     };
 
-    TouchProfiles touchProfiles(QFileInfo(appSettings.filePath()).absolutePath() +
-                                "/touch-profiles.json");
     ShareRoutesDeps shareDeps;
     shareDeps.joinTarget = joinTarget;
     shareDeps.statsReporting = [&appSettings]() { return appSettings.sessionMetricsAllowed(); };
@@ -5778,7 +5821,7 @@ int main(int argc, char* argv[])
         QObject::connect(worker, &StreamWorkerHost::responseReady, qApp,
                          [respond, &g_LiveSunshineUids, &g_StreamEnds, &shareManager,
                           &sessionMetrics, sessionFacts, sessionStartedAt, slot, uid, hostUuid,
-                          streamId](int code, QJsonObject bodyObj) {
+                          streamId, controllerOnly](int code, QJsonObject bodyObj) {
                              const bool ok = code == 200 && bodyObj["status"].toString() ==
                                                                 QLatin1String("streaming");
                              sessionFacts->codec = bodyObj["videoCodec"].toString();
@@ -5795,7 +5838,7 @@ int main(int argc, char* argv[])
                                  g_StreamEnds.begin(streamId, hostUuid, slot, uid, QString(),
                                                     QDateTime::currentMSecsSinceEpoch());
                                  g_LiveSunshineUids.insert(uid);
-                                 shareManager.setStreaming(slot, true);
+                                 shareManager.setStreaming(slot, true, controllerOnly ? QStringLiteral("gamepad") : QStringLiteral("stream"));
                              }
                              respond(HttpResponse::json(bodyObj, ok ? 200 : code));
                          });

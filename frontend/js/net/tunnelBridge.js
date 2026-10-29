@@ -45,6 +45,7 @@
  * When that connection drops, lineKeeper.js dials it again under the page.
  */
 import { LineKeeper } from './lineKeeper.js';
+import { clientTestUrl } from '../util/clientTestMode.js';
 import { showLineNotice } from '../ui/LineNotice.js';
 
 /** The connection, and the next one when it drops; null without a tunnel. */
@@ -154,7 +155,7 @@ export function bootstrapAddressFor(id, { hash, pathname }) {
  * send(), same close() — so the calling code does not branch.
  */
 export function openSignalingSocket(url) {
-    if (!keeper) return new WebSocket(url);
+    if (!keeper) return new WebSocket(clientTestUrl(url));
     // Only the path matters to the host; the scheme and authority describe an
     // address that does not answer on this path.
     const parsed = new URL(url, location.origin);

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="vi">
     <head>
         <meta charset="UTF-8" />
         <meta
@@ -76,29 +76,12 @@
                          visible default flashes buttons a guest never gets.
                          On a phone the three are icons; wider, each carries
                          its name (.header-btn-label). -->
-                    <!-- Buy me a coffee — from the 10th good session on
-                         (util/supportNudge.js). The logo is put in by
-                         _initNavButtons(): one copy of it, in bmcLogo.js. -->
-                    <a
-                        class="btn btn-neutral header-btn-bmc"
-                        id="btn-bmc"
-                        href="https://buymeacoffee.com/brunoocto"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        hidden
-                        title="Support MoonlightWeb"
-                        aria-label="Buy me a coffee"
-                        data-i18n-attr="title:support.tooltip, aria-label:support.action"
-                    >
-                        <span class="header-btn-bmc-logo"></span>
-                        <span class="header-btn-label header-btn-bmc-full"></span>
-                    </a>
                     <!-- Server Settings (localhost only) -->
                     <button
                         class="btn-icon has-label"
                         id="btn-admin"
                         style="display: none"
-                        title="Server Settings"
+                        title="Cài đặt máy chủ"
                         data-i18n-attr="title:header.serverSettings"
                     >
                         <svg
@@ -115,14 +98,14 @@
                                 d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"
                             />
                         </svg>
-                        <span class="header-btn-label" data-i18n="header.adminLabel">Admin</span>
+                        <span class="header-btn-label" data-i18n="header.adminLabel">Quản trị</span>
                     </button>
                     <!-- Streaming Settings -->
                     <button
                         class="btn-icon has-label"
                         id="btn-settings"
                         style="display: none"
-                        title="Streaming Settings"
+                        title="Cài đặt Streaming"
                         data-i18n-attr="title:header.streamingSettings"
                     >
                         <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
@@ -137,7 +120,7 @@
                             />
                         </svg>
                         <span class="header-btn-label" data-i18n="header.settingsLabel"
-                            >Settings</span
+                            >Cài đặt</span
                         >
                     </button>
                 </div>
@@ -148,7 +131,7 @@
             </main>
 
             <footer class="app-footer">
-                <span data-i18n="footer.tagline">MoonlightWeb &mdash; Game Streaming Client</span>
+                <span data-i18n="footer.tagline">MoonlightWeb &mdash; Ứng dụng Game Streaming</span>
             </footer>
         </div>
 

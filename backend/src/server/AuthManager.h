@@ -38,10 +38,14 @@ struct SessionInfo
                    // never the raw token — a stolen sessions.json cannot be replayed
     QString ip;
     QString machineName;
+    QString accountId;
     QString city;
     QString country;
     qint64 createdAt = 0;   // unix timestamp (secs)
     qint64 lastSeen = 0;    // unix secs; bumped on activity (sliding expiration)
+    QString remoteMode;
+    qint64 remoteStartedAt = 0;
+    qint64 remoteEndedAt = 0;
     bool streaming = false; // runtime-only: true while this session has an active stream
     bool isHost = false;    // created by redeeming the host key: this browser runs on
                             // the host machine itself (via the public domain) and is
@@ -82,11 +86,15 @@ struct SessionInfo
         if (!pairingKey.isEmpty()) obj["pairing_key"] = QString::fromLatin1(pairingKey.toBase64());
         obj["ip"] = ip;
         obj["machine_name"] = machineName;
+        obj["account_id"] = accountId;
         obj["city"] = city;
         obj["country"] = country;
         obj["created_at"] = createdAt;
         obj["last_seen"] = lastSeen;
         obj["streaming"] = streaming;
+        obj["remote_mode"] = remoteMode;
+        obj["remote_started_at"] = remoteStartedAt;
+        obj["remote_ended_at"] = remoteEndedAt;
         obj["is_host"] = isHost;
         obj["is_admin"] = isAdmin;
         obj["via_tunnel"] = viaTunnel;
@@ -102,6 +110,9 @@ class AuthManager : public QObject
     Q_OBJECT
 
 public:
+    QString clientAccountId(const QString& name) const;
+    bool bindClientAccount(const QString& token, const QString& accountId);
+    void revokeClientAccount(const QString& accountId);
     /// @param settings Optional AppSettings for HMAC key persistence.
     ///                 If null, a random HMAC key is generated each time.
     explicit AuthManager(AppSettings* settings = nullptr, QObject* parent = nullptr);
@@ -109,6 +120,11 @@ public:
 
     // ── PIN management ─────────────────────────────────────────────────────
     QString generatePin();
+    QString generateAdminPin();
+    QString currentAdminPin() const { return m_adminPin; }
+    void clearAdminPin() { m_adminPin.clear(); }
+    bool clientAppAllowed(const QString& host, int appId) const;
+    bool clientHostAllowed(const QString& host) const;
     QString currentPin() const { return m_currentPin; }
     bool hasValidPin() const; // true if a real PIN has been generated
     void clearPin();          // reset PIN to "--------" (invalid)
@@ -129,7 +145,7 @@ public:
         int lockoutSeconds = 0;
     };
 
-    ValidateResult validatePin(const QString& ip, const QString& pin);
+    ValidateResult validatePin(const QString& ip, const QString& pin, bool admin = false);
 
     // ── Remote admin password ──────────────────────────────────────────────
     // Second door into admin access, for a LAN machine that is not the host.
@@ -254,9 +270,9 @@ public:
      *  can re-run the async geolocation lookup. */
     bool updateSessionAddress(const QString& token, const QString& ip);
 
-    /** Flag a session as actively streaming (or not). When set true, any other
-     *  session's streaming flag is cleared first (single active stream). */
-    void setSessionStreaming(const QString& token, bool streaming);
+    /** Flag a session as actively streaming (or not). Each device keeps its own
+     *  state because independent hosts may be streamed concurrently. */
+    void setSessionStreaming(const QString& token, bool streaming, const QString& mode = QStringLiteral("stream"));
 
     /**
      * Returns detailed session info for all active sessions, newest first.
@@ -311,6 +327,7 @@ public:
     {
         QString machineName; ///< the session the key came from
         QJsonArray instances;
+        QString accountId;
     };
     /** Spend @p key. Single-use; refused once expired, or once the session it
      *  came from has been revoked or has expired. */
@@ -438,6 +455,7 @@ private:
 
     AppSettings* m_settings = nullptr;
     QString m_currentPin;
+    QString m_adminPin;
     bool m_pinConsumed = false;
     QByteArray m_hmacKey;
     QHash<QString, RateLimitEntry> m_rateLimits; // rate-limit key -> entry

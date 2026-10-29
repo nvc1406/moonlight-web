@@ -16,6 +16,7 @@
  */
 
 #include "HttpServer.h"
+#include "ClientTestMode.h"
 #include "HttpParser.h"
 #include "PortFallback.h"
 #include "RequestGuard.h"
@@ -1139,6 +1140,20 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
 
 void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback respond)
 {
+    ClientTestMode::prepare(req);
+    if (req.testClient) {
+        auto original = std::move(respond);
+        respond = [original](HttpResponse resp) { original(ClientTestMode::response(std::move(resp))); };
+        if (req.path == "/api/admin/token") {
+            respond(HttpResponse::json(QJsonObject{}));
+            return;
+        }
+        if (req.path.startsWith("/api/admin/") || req.path == "/api/auth/admin-unlock" ||
+            req.path == "/api/auth/host-key") {
+            respond(HttpResponse::error(403, "client_test_mode"));
+            return;
+        }
+    }
     // ── Access decision ───────────────────────────────────────────────────────
     // The local privilege below is granted on the source IP alone, and a browser
     // running on the host lends that IP to every page it has open: without these
@@ -1215,9 +1230,9 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
 
     RequestGuard::Context ctx;
     ctx.peerLocal = peerLocal;
-    ctx.hostSession =
+    ctx.hostSession = !req.testClient &&
         m_AuthManager && m_AuthManager->isHostSession(sessionToken) && (!viaTunnel || tunnelHost);
-    ctx.adminSession = m_AuthManager && m_AuthManager->isAdminSession(sessionToken);
+    ctx.adminSession = !req.testClient && m_AuthManager && m_AuthManager->isAdminSession(sessionToken);
     // The admin key has to follow the two sessions that carry admin rights
     // through the tunnel, or they would be read-only: admin WRITES require it,
     // so an admin page that loads and then refuses every change is worse than
@@ -1473,7 +1488,48 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
         return;
     }
 
-    m_Router->dispatchAsync(req, [respond](const HttpResponse& resp) {
+    // Client sessions have a small playback surface. Management APIs default to admin-only.
+    const bool client = m_AuthManager && !req.isLocal;
+    const QStringList parts = req.path.split('/', Qt::SkipEmptyParts);
+    const bool hostRoute = parts.size() == 4 && parts[0] == "api" && parts[1] == "hosts";
+    if (client && req.path.startsWith("/api/") && !req.path.startsWith("/api/auth/") &&
+        !req.path.startsWith("/api/share/player/")) {
+        const bool read = req.method == "GET" || req.method == "HEAD";
+        const bool allowed =
+            (read && (req.path == "/api/health" || req.path == "/api/server/hostname" ||
+                      req.path == "/api/server/status" || req.path == "/api/hosts" ||
+                      req.path == "/api/settings/streaming" || req.path == "/api/touch/capabilities" ||
+                      req.path == "/api/touch/game" || req.path == "/api/touch/profiles" ||
+                      req.path == "/api/update/check")) ||
+            (hostRoute && ((read && (parts[3] == "apps" || parts[3] == "appasset" ||
+                                     parts[3] == "stream-state" || parts[3] == "running-app")) ||
+                           (req.method == "POST" && (parts[3] == "start" || parts[3] == "quit")))) ||
+            (req.method == "POST" && req.path == "/api/logs/client");
+        if (!allowed) {
+            respond(HttpResponse::error(403, "Admin required"));
+            return;
+        }
+        if (hostRoute && parts[3] != "quit" && !m_AuthManager->clientHostAllowed(parts[2])) {
+            respond(HttpResponse::error(403, "Host not allowed for clients"));
+            return;
+        }
+        if (req.path == "/api/touch/game" &&
+            !m_AuthManager->clientAppAllowed(req.queryParams.value("host"), req.queryParams.value("appId").toInt())) {
+            respond(HttpResponse::error(403, "App not allowed for clients"));
+            return;
+        }
+        if (hostRoute && (parts[3] == "start" || parts[3] == "appasset")) {
+            const int appId = parts[3] == "start"
+                ? QJsonDocument::fromJson(req.body).object().value("appId").toInt()
+                : req.queryParams.value("appid").toInt();
+            if (!m_AuthManager->clientAppAllowed(parts[2], appId)) {
+                respond(HttpResponse::error(403, "App not allowed for clients"));
+                return;
+            }
+        }
+    }
+
+    m_Router->dispatchAsync(req, [this, respond, client, parts](const HttpResponse& resp) {
         // API answers are per-session state (host list, sessions, settings)
         // and several are privilege-dependent — the very same URL returns
         // less to a remote client than to the host. Nothing may keep a copy:
@@ -1481,6 +1537,33 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
         // they would outlive the session that was allowed to see them.
         // Handlers that set their own policy keep it.
         HttpResponse out = resp;
+        if (client && parts.size() == 2 && parts[1] == "hosts" && resp.statusCode == 200) {
+            auto body = QJsonDocument::fromJson(resp.body).object();
+            QJsonArray hosts;
+            for (const auto& host : body.value("hosts").toArray()) {
+                auto obj = host.toObject();
+                if (!m_AuthManager->clientHostAllowed(obj.value("uuid").toString())) continue;
+                if (!m_AuthManager->clientAppAllowed(obj.value("uuid").toString(), obj.value("currentGameId").toInt()))
+                    obj["currentGameId"] = 0;
+                obj.remove("backendApiUrl");
+                obj.remove("backendPairUser");
+                obj.remove("backendPairConfigured");
+                obj.remove("backendConfigured");
+                hosts.append(obj);
+            }
+            body["hosts"] = hosts;
+            out.body = QJsonDocument(body).toJson(QJsonDocument::Compact);
+        }
+        if (client && parts.size() == 4 && parts[1] == "hosts" && parts[3] == "apps" &&
+            resp.statusCode == 200) {
+            auto body = QJsonDocument::fromJson(resp.body).object();
+            QJsonArray apps;
+            for (const auto& app : body.value("apps").toArray())
+                if (m_AuthManager->clientAppAllowed(parts[2], app.toObject().value("id").toInt()))
+                    apps.append(app);
+            body["apps"] = apps;
+            out.body = QJsonDocument(body).toJson(QJsonDocument::Compact);
+        }
         if (!out.headers.contains("Cache-Control")) out.headers["Cache-Control"] = "no-store";
         respond(out);
     });
@@ -1488,7 +1571,8 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
 
 void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArray& requestData)
 {
-    const HttpRequest up = HttpParser::parse(requestData);
+    HttpRequest up = HttpParser::parse(requestData);
+    ClientTestMode::prepare(up);
     const QString peerAddr = clientSocket->peerAddress().toString();
 
     // Same refusal as the REST path: a control character in the target means the
@@ -1528,6 +1612,11 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
     //   GET /wsN/stream  → proxy to slot N's legacy relay   2.. = players)
     QString firstLine = QString::fromUtf8(requestData.left(requestData.indexOf("\r\n")));
     QString path = firstLine.section(' ', 1, 1);
+    if (up.testClient) path.remove(0, QStringLiteral("/client-test").size());
+    if (up.testClient && path == "/ws/control") {
+        sendResponse(clientSocket, HttpResponse::error(403, "client_test_mode"));
+        return;
+    }
 
     bool wsIsRelay = false;
     const int wsSlot = slotFromWsPath(path, &wsIsRelay);
@@ -1564,7 +1653,7 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
     // A player's slot is the exception: those callers have no MoonlightWeb
     // session and never will, so the mw_player cookie bound to that slot's
     // activation is what opens it — and nothing else, not even a local peer.
-    const bool localPrivilege = HttpServer::isLocalRequest(peerAddr) &&
+    const bool localPrivilege = !up.testClient && HttpServer::isLocalRequest(peerAddr) &&
                                 RequestGuard::isLocalHostName(up.headers.value("host"));
     if (playerSlot) {
         if (!m_PlayerSlotAuth || !m_PlayerSlotAuth(up, wsSlot)) {
@@ -1592,6 +1681,9 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
     // const reference to the QByteArray inside m_Buffers — remove() destroys it.
     // NOLINTNEXTLINE(performance-unnecessary-copy-initialization) — copy is required.
     QByteArray upgradeRequest = requestData;
+    if (up.testClient)
+        upgradeRequest.replace(0, upgradeRequest.indexOf("\r\n"),
+                               ("GET " + path + " HTTP/1.1").toUtf8());
 
     // Remove from our tracking — HttpServer should no longer manage this socket.
     m_Buffers.remove(clientSocket);

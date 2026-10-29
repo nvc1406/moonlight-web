@@ -72,7 +72,30 @@ describe('LoginView "remember me"', () => {
         typePin('123456');
         container.querySelector('#btn-login-unlock').click();
         await vi.waitFor(() => expect(BackendClient.validatePin).toHaveBeenCalled());
-        expect(BackendClient.validatePin).toHaveBeenCalledWith('123456', expect.any(String), true);
+        expect(BackendClient.validatePin).toHaveBeenCalledWith(
+            '123456',
+            expect.any(String),
+            true,
+            'client',
+            '',
+        );
+    });
+
+    it('sends the administrator-created account name with first-login PIN', async () => {
+        const account = container.querySelector('#login-account-input');
+        account.value = 'Player One';
+        account.dispatchEvent(new Event('input'));
+        typePin('123456');
+        container.querySelector('#btn-login-unlock').click();
+        await vi.waitFor(() =>
+            expect(BackendClient.validatePin).toHaveBeenCalledWith(
+                '123456',
+                expect.any(String),
+                true,
+                'client',
+                'Player One',
+            ),
+        );
     });
 
     it('carries the refusal to the server when the box is unchecked', async () => {
@@ -83,7 +106,13 @@ describe('LoginView "remember me"', () => {
         typePin('123456');
         container.querySelector('#btn-login-unlock').click();
         await vi.waitFor(() => expect(BackendClient.validatePin).toHaveBeenCalled());
-        expect(BackendClient.validatePin).toHaveBeenCalledWith('123456', expect.any(String), false);
+        expect(BackendClient.validatePin).toHaveBeenCalledWith(
+            '123456',
+            expect.any(String),
+            false,
+            'client',
+            '',
+        );
     });
 
     it('keeps the refusal through a wrong PIN, which re-renders the form', async () => {
@@ -113,7 +142,32 @@ describe('LoginView "remember me"', () => {
             '123456',
             expect.any(String),
             false,
+            'client',
+            '',
         );
+    });
+
+    it('uses the admin PIN role and preserves it after a failed attempt', async () => {
+        const role = container.querySelector('#login-role');
+        role.value = 'admin';
+        role.dispatchEvent(new Event('change'));
+        BackendClient.validatePin.mockResolvedValueOnce({
+            status: 'error',
+            error: 'invalid_pin',
+            remaining: 2,
+        });
+        typePin('654321');
+        container.querySelector('#btn-login-unlock').click();
+        await vi.waitFor(() =>
+            expect(BackendClient.validatePin).toHaveBeenCalledWith(
+                '654321',
+                expect.any(String),
+                true,
+                'admin',
+                '',
+            ),
+        );
+        await vi.waitFor(() => expect(container.querySelector('#login-role').value).toBe('admin'));
     });
 
     it('passes the choice through the certificate form too', async () => {

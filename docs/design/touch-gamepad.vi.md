@@ -7,8 +7,8 @@ Tính năng mới dành cho **Windows native host**. Luồng stream và mapping 
 1. Trên máy chủ, mở **Settings → Game → Mode → Profile**. Chọn game, rồi chọn `Video + audio + gamepad` hoặc `Gamepad only`.
 2. Tạo profile, chọn một nút trong preview để đổi nhãn, output, kích thước hoặc ẩn nút; kéo nút để đổi vị trí. Nút `landscape`/`portrait` chuyển layout đang chỉnh. `Test controls` chỉ kiểm tra output trong editor, không gửi input tới game.
 3. Chỉnh deadzone, sensitivity, opacity và mặc định nghe âm thanh game. Dùng `Set default` cho từng mode, rồi **Save to host** để áp dụng. `Duplicate` sao chép trong mode; `Copy to other mode` tạo một bản độc lập. Xóa profile mặc định có bản thay thế sẽ yêu cầu chọn bản thay thế trước.
-4. Mở game/stream như bình thường, rồi dùng link/QR mời điện thoại vào một slot có quyền gamepad. Trang tham gia cho chọn mode, nguồn cảm ứng/tay cầm vật lý, profile và nghe âm thanh game.
-5. Trong phiên, mở **Controls** để hiện/ẩn gamepad, chọn profile, bật/tắt game audio, nghe voice và microphone. Khách có thể đổi giữa hai mode trong cùng slot; kết nối được tạo lại và người xem khác tiếp tục chạy.
+4. Khi bấm app trong thư viện Windows native host, hộp **Connect** cho chọn mode, input, profile và nghe game trước khi mở kết nối. Chọn **Cancel** để quay lại thư viện. Chủ phiên cũng dùng được Gamepad only ngay từ đây. Sau đó rồi dùng link/QR mời điện thoại vào một slot có quyền gamepad. Trang tham gia cho chọn mode, nguồn cảm ứng/tay cầm vật lý, profile và nghe âm thanh game.
+5. Trong phiên, nút **Controls** nằm ở góc trên bên trái vùng hình ảnh, bên dưới thanh Fullscreen/volume. Mở **Controls** để hiện/ẩn gamepad, chọn profile, bật/tắt game audio, nghe voice và microphone. Client đã ghép đôi không cần quyền admin để mở hộp Connect; quản lý profile vẫn yêu cầu chủ host/admin. Khách có thể đổi giữa hai mode trong cùng slot; kết nối được tạo lại và người xem khác tiếp tục chạy.
 
 `Video + audio + gamepad` hiển thị video cùng joystick và các nút trên một màn hình. `Gamepad only` không tạo pipeline capture/encode video, không lấy shared video feed, không tạo kênh/track video và không chờ frame đầu tiên. Âm thanh game mặc định bật ở mode video, tắt ở mode gamepad; profile có thể đổi mặc định này. Tắt nghe game trên điện thoại dừng capture audio cho kết nối đó.
 
@@ -42,6 +42,8 @@ Mỗi profile có `id`, `name`, `audio`, `deadzone`, `sensitivity`, `opacity` v�
 
 | API | Quyền và hành vi |
 | --- | --- |
+| `GET /api/touch/capabilities?host=…` | Chủ host/admin hoặc client đã ghép đôi; đọc khả năng chọn mode trước kết nối. |
+| `GET /api/touch/game?host=…&appId=…` | Chủ host/admin hoặc client đã ghép đôi; chỉ đọc game/profile để chọn khi kết nối. Không cấp quyền sửa profile. |
 | `GET/POST /api/touch/profiles` | Chủ host/admin; POST cần CSRF admin token như các thay đổi settings hiện có. Kiểm tra version, revision, mặc định và layout. |
 | `GET /api/share/player/touch/session` | Chủ phiên có xác thực hoặc cookie của slot đang chạy; chỉ trả game/profile thuộc phiên. Client theo dõi revision bằng polling 1,5 giây. |
 | `POST /api/share/player/touch/session` | Chủ host chọn `appId` cho phiên Desktop/Steam. |

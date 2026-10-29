@@ -32,6 +32,36 @@ describe('AdminView sessions sort', () => {
         view._renderSessionsTable();
     });
 
+    it('filters live and previous remotes and preserves the filter when sorted', () => {
+        view._sessions[0].remote_started_at = 123;
+        view._sessions[0].remote_ended_at = 145;
+        view._sessions[0].remote_mode = 'gamepad';
+        view._renderSessionsTable();
+        container.querySelector('[data-session-filter="history"]').click();
+        expect(names()).toEqual(['zeta']);
+        expect(container.textContent).toContain('admin.remoteGamepad');
+        clickHeader('machine');
+        expect(names()).toEqual(['zeta']);
+        container.querySelector('[data-session-filter="active"]').click();
+        expect(names()).toEqual(['mid']);
+        container.querySelector('[data-session-filter="all"]').click();
+        expect(names()).toHaveLength(3);
+    });
+    it('shows guests without session editing or session revocation', () => {
+        view._sessions = [
+            {
+                token: 'guest-1',
+                guest: true,
+                machine_name: '<Guest>',
+                streaming: true,
+                remote_mode: 'gamepad',
+            },
+        ];
+        view._renderSessionsTable();
+        expect(container.querySelector('.session-guest-name').textContent).toBe('<Guest>');
+        expect(container.querySelector('.btn-session-revoke')).toBeNull();
+        expect(container.querySelector('.session-name-edit')).toBeNull();
+    });
     it('keeps the backend order until a header is clicked', () => {
         expect(names()).toEqual(['zeta', 'Alpha', 'mid']);
     });

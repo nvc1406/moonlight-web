@@ -34,6 +34,17 @@ class AppSettings
 {
 public:
     explicit AppSettings();
+    QJsonObject clientAccounts() const { return readAll().value("client_accounts").toObject(); }
+    void setClientAccounts(const QJsonObject& accounts) {
+        auto obj = readAll(); obj["client_accounts"] = accounts; writeAll(obj);
+    }
+    QJsonObject clientApps() const { return readAll().value("client_apps").toObject(); }
+    void setClientApps(const QJsonObject& apps) {
+        auto obj = readAll(); obj["client_apps"] = apps; writeAll(obj);
+    }
+    bool clientAppAllowed(const QString& host, int appId) const {
+        return appId > 0 && clientApps().value(host).toArray().contains(appId);
+    }
 
     // ── Settings file location (--config) ───────────────────────────────────
 

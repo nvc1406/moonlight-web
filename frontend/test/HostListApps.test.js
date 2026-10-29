@@ -12,6 +12,9 @@ import { HostListView } from '../js/ui/HostListView.js';
 import { Host } from '../js/models/Host.js';
 import { BackendClient } from '../js/api/BackendClient.js';
 
+// These fixtures exercise the admin library; clients fetch a permission-filtered list.
+BackendClient.isAdmin = true;
+
 const READY_HOST = { uuid: 'host-a', name: 'BENCH-DESK', state: 'online', pairState: 'paired' };
 
 const ok = (apps) => ({ status: 'ok', apps });

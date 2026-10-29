@@ -97,6 +97,7 @@ struct Request
     QString path;
     QMap<QString, QString> headers; // lowercase keys
     qsizetype bodySize = 0;
+    bool testClient = false;
 };
 
 /// Narrow a parsed request down to those parts. Production and the TNR both go

@@ -47,6 +47,8 @@
  */
 // First, before any module prints: the page's console for the client log in
 // debug mode (util/ClientLog.js).
+import { isClientTestMode } from './util/clientTestMode.js';
+import { ConnectDialog } from './touch/ConnectDialog.js';
 import { refreshClientLog } from './util/ClientLog.js';
 import { HostListView } from './ui/HostListView.js';
 import { StreamView } from './ui/StreamView.js';
@@ -59,17 +61,9 @@ import { SetupView } from './ui/SetupView.js';
 import { PlayerJoinView } from './ui/PlayerJoinView.js';
 import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
-import { DiscordLink } from './ui/DiscordLink.js';
 import * as RemoteNav from './ui/RemoteNav.js';
 import * as ViewHeaderScroll from './ui/ViewHeaderScroll.js';
 import { GamepadDriverNotice } from './ui/GamepadDriverNotice.js';
-import { BMC_LOGO, BMC_FULL_LOGO } from './ui/bmcLogo.js';
-import {
-    SUPPORT_CHANGED_EVENT,
-    noteGoodSession,
-    showSupportButton,
-    takeSupportIntroduction,
-} from './util/supportNudge.js';
 import { VersionGuard } from './util/VersionGuard.js';
 import {
     IS_MOBILE_OR_TABLET,
@@ -223,10 +217,6 @@ export const MoonlightApp = {
     // re-launch loops. Reset to 0 each time the user initiates a new stream
     // (not a fallback). If H.264 also fails, stop falling back.
     _fallbackAttemptCount: 0,
-
-    // performance.now() when the owner's current stream was launched; 0 when
-    // none is running (see _noteSupportSession).
-    _streamStartedAt: 0,
 
     // ── Navigation state (never destroyed by overlays) ──────────────────────
     _nav: {
@@ -831,7 +821,9 @@ export const MoonlightApp = {
         });
 
         // ── Initial route ──────────────────────────────────────────────────
-        const path = window.location.pathname;
+        const path = isClientTestMode()
+            ? window.location.pathname.slice('/client-test'.length) || '/'
+            : window.location.pathname;
         let mainView, mainState, initialOverlay;
         // Deep link from the tray's "Streaming (n)" entry: the admin page, at
         // its sessions table. A path rather than a hash because the entry may
@@ -929,7 +921,27 @@ export const MoonlightApp = {
         }
 
         this.hostListView = new HostListView(main);
-        this.hostListView.onLaunchApp = (host, app) => this.launchApp(host, app);
+        this.hostListView.onLaunchApp = async (host, app) => {
+            if (this.state === 'launching' || this.state === 'streaming' || this._connectDialogOpen)
+                return;
+            this._connectDialogOpen = true;
+            let connectFailed = false;
+            try {
+                const choice = await ConnectDialog.open(host, app);
+                if (choice === null) return;
+                this._launchTouchChoice = { host: host.uuid, appId: app.id, ...choice };
+                await this.launchApp(host, app);
+            } catch (error) {
+                connectFailed = true;
+                Toast.error(error.message);
+            } finally {
+                this._connectDialogOpen = false;
+                if (this.state !== 'launching' && this.state !== 'streaming') {
+                    this.hostListView.clearLaunching({ failed: connectFailed });
+                    this.hostListView.start();
+                }
+            }
+        };
         this.hostListView.start();
 
         // Tell the user how OTHER PCs reach this server (host machine), and —
@@ -1420,6 +1432,7 @@ export const MoonlightApp = {
      * place for the next attempt to spend.
      */
     async _redeemHostKey() {
+        if (isClientTestMode()) return;
         const params = new URLSearchParams(window.location.search);
         const raw = params.get('mwk') || takeTunnelHostKey();
         if (!raw) return;
@@ -1568,6 +1581,7 @@ export const MoonlightApp = {
      * a LAN machine that unlocked with the remote admin password.
      */
     _isHostLocal() {
+        if (isClientTestMode()) return false;
         if (this._hasAdminAccess) return true;
         // Booth mode (--noadmin): on localhost too, nobody administers.
         if (BackendClient.adminLocked) return false;
@@ -1581,18 +1595,17 @@ export const MoonlightApp = {
      * but none of the local desktop the setup wizard needs.
      */
     _isHostMachine() {
+        if (isClientTestMode()) return false;
         if (this._isRealHostMachine) return true;
         const hostname = window.location.hostname;
         return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
     },
 
     /**
-     * True when the admin page may be opened at all — either this browser
-     * already has admin access, or it is a LAN machine that can unlock it with
-     * the password (AdminView renders the prompt in that case).
+     * Only browsers with admin access may open the admin page.
      */
     _canReachAdmin() {
-        return this._isHostLocal() || !!this._adminUnlockAvailable;
+        return this._isHostLocal();
     },
 
     /** What /api/auth/status says this browser may do here. */
@@ -1859,34 +1872,6 @@ export const MoonlightApp = {
                 }
             });
         }
-
-        // Buy me a coffee: a plain link, so the browser opens the new tab. It
-        // comes and goes with the count and the Settings switch.
-        const btnBmc = document.getElementById('btn-bmc');
-        if (btnBmc && !btnBmc.dataset.wired) {
-            // Wired once: this runs again after a login.
-            btnBmc.dataset.wired = '1';
-            const logo = btnBmc.querySelector('.header-btn-bmc-logo');
-            if (logo) logo.innerHTML = BMC_LOGO;
-            const full = btnBmc.querySelector('.header-btn-bmc-full');
-            if (full) full.innerHTML = BMC_FULL_LOGO;
-            btnBmc.addEventListener('click', () => btnBmc.classList.remove('is-new'));
-            window.addEventListener(SUPPORT_CHANGED_EVENT, () => this._refreshSupportButton());
-            this._refreshSupportButton();
-        }
-    },
-
-    /**
-     * Show or hide the header's Buy me a coffee button (util/supportNudge.js
-     * decides). Never in booth mode. The visit it first appears on, it glows.
-     */
-    _refreshSupportButton() {
-        const btnBmc = document.getElementById('btn-bmc');
-        if (!btnBmc) return;
-        const show = !BackendClient.adminLocked && showSupportButton();
-        btnBmc.hidden = !show;
-        if (show && takeSupportIntroduction()) btnBmc.classList.add('is-new');
-        if (!show) btnBmc.classList.remove('is-new');
     },
 
     _updateNavHighlight(active) {
@@ -2074,10 +2059,6 @@ export const MoonlightApp = {
         this._lastStreamHost = host;
         this._lastStreamApp = app;
 
-        // When this evening's stream started, for _noteSupportSession. A codec
-        // fallback relaunch is the same stream carrying on: it keeps the time.
-        if (!codecOverride) this._streamStartedAt = performance.now();
-
         // A user-initiated launch clears any previous abort (a codec/HDR
         // fallback relaunch is a continuation of the aborted one — it must
         // keep the flag so it bails out below).
@@ -2093,6 +2074,11 @@ export const MoonlightApp = {
             } catch (e) {
                 console.warn('[MW] Failed to parse streaming settings from localStorage:', e);
             }
+        }
+
+        const touchChoice = this._launchTouchChoice;
+        if (touchChoice?.host === host.uuid && touchChoice.appId === app.id) {
+            Object.assign(streamingSettings, touchChoice.settings);
         }
 
         // Session-only congestion-degradation overrides (bitrate/fps/transport).
@@ -3470,6 +3456,10 @@ export const MoonlightApp = {
             // The host is this machine's own screen (mw-native-host): the mouse
             // is sent at its raw report rate there — see _bindPointerRaw.
             nativeHost: result.native === true,
+            controllerOnly: result.mode === 'gamepad',
+            touchSource: streamingSettings.touch_source === true,
+            touchProfileId: streamingSettings.profile_id || '',
+            gameAudio: result.game_audio,
             // The virtual display drawn by another GPU than the display it
             // replaced, when the host says so: the view tells the user to
             // restart a stuttering app, once the stream shows the stall —
@@ -4744,12 +4734,6 @@ export const MoonlightApp = {
      * infinite loops if H.264 also fails.
      */
     _onStreamingQuit() {
-        // A stream that lasted counts toward the coffee thank-you — read before
-        // anything below drops the view. A codec fallback is not an end: the
-        // relaunch carries the same stream on.
-        if (!(this.streamView && this.streamView._codecFallbackRequested))
-            this._noteSupportSession();
-
         // Drop any lingering transport-relaunch loader and the upgrade poll,
         // and any standby leg of a seamless transition (the live stream ended).
         this._hideRelaunchLoader();
@@ -4877,18 +4861,6 @@ export const MoonlightApp = {
         }
     },
 
-    /**
-     * One owner stream is over: hand its length to util/supportNudge.js, which
-     * counts it if it lasted. Guests quit through their own path and never get
-     * here. Spends the start time, so a second call for the same stream is a
-     * no-op.
-     */
-    _noteSupportSession() {
-        const started = this._streamStartedAt;
-        this._streamStartedAt = 0;
-        if (started > 0) noteGoodSession((performance.now() - started) / 1000);
-    },
-
     // =========================================================================
     // Cleanup helpers
     // =========================================================================
@@ -4957,10 +4929,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     // markup (header buttons / footer) that exists in index.html.
     await i18nInit();
     applyDOM(document);
+    if (isClientTestMode()) {
+        const banner = document.createElement('div');
+        banner.className = 'client-test-banner';
+        const label = document.createElement('span');
+        label.textContent = t('access.testClientNotice');
+        const admin = document.createElement('a');
+        admin.href = '/admin';
+        admin.target = '_blank';
+        admin.rel = 'noopener';
+        admin.textContent = t('access.openAdmin');
+        banner.append(label, admin);
+        document.getElementById('main-content').before(banner);
+    }
     // The community button lives outside every view — drawn once here, after
     // the catalogs are in so its label is not the English one for a French
     // reader, and left alone from then on. The stream hides it in CSS.
-    DiscordLink.mount();
     // Arrows and pads get around the pages on a TV (nothing is attached
     // elsewhere). Before the app, so its listeners see the keys first.
     RemoteNav.init();

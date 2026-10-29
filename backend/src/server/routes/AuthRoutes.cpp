@@ -30,6 +30,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QUuid>
 
 namespace {
 
@@ -111,6 +112,19 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         QString machineName = body["machine_name"].toString();
         const bool remember = wantsRemember(body);
 
+        const QString role = body.value("role").toString("client");
+        if (role != "client" && role != "admin") return HttpResponse::error(400, "Invalid role");
+        const bool adminLogin = role == "admin";
+        if (req.testClient && adminLogin) return HttpResponse::error(403, "client_test_mode");
+        const QString accountId = authManager.clientAccountId(body.value("account_name").toString());
+        const bool accountRequired = !adminLogin && !settings.clientAccounts().isEmpty();
+        if (accountRequired && !certificate.isEmpty())
+            return HttpResponse::error(400, "Use account name and Client PIN");
+        if (adminLogin && (req.adminLocked || !AuthManager::canUnlockAdmin(
+                req.clientAddress, req.hostTrusted, req.viaTunnel, authManager.remoteAdminInternet())))
+            return HttpResponse::error(403, "Admin PIN login is unavailable on this connection");
+        if (adminLogin && !certificate.isEmpty()) return HttpResponse::error(400, "Admin requires its own PIN");
+
         // ── Certificate authentication (alternative to PIN) ────────────
         if (!certificate.isEmpty() && authManager.certAuthEnabled()) {
             if (authManager.validateCertificate(certificate)) {
@@ -146,13 +160,16 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         // Counted against the socket peer, or the visitor a local reverse proxy
         // names (AuthManager::attemptAddress).
         auto result = authManager.validatePin(
-            AuthManager::attemptAddress(req.clientAddress, req.headers), pin);
+            AuthManager::attemptAddress(req.clientAddress, req.headers), pin, adminLogin);
 
         QJsonObject obj;
         switch (result.result) {
         case AuthManager::Valid: {
+            if (accountRequired && accountId.isEmpty())
+                return HttpResponse::error(401, "Unknown account. Ask the administrator to create it.");
             QString token =
                 authManager.createSession(req.clientAddress, machineName, false, !remember);
+            if (accountRequired) authManager.bindClientAccount(token, accountId);
 
             // Look up the IP geolocation asynchronously and store in the session
             geoIpService.lookupIp(req.clientAddress, [&authManager, token](const QString& city,
@@ -161,7 +178,13 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             });
 
             // Auto-regenerate PIN — immediately invalidate the just-used PIN
-            authManager.autoRegeneratePin();
+            if (adminLogin) {
+                authManager.promoteSessionToAdmin(token);
+                authManager.clearAdminPin();
+            } else {
+                authManager.autoRegeneratePin();
+            }
+            obj["role"] = adminLogin ? "admin" : "client";
 
             obj["status"] = "ok";
             obj["pin_regenerated"] = true;
@@ -213,6 +236,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         QString machineName = body.value(QStringLiteral("machine_name")).toString().trimmed();
         if (machineName.isEmpty()) machineName = handoff->machineName;
         const QString token = authManager.createSession(req.clientAddress, machineName);
+        if (!handoff->accountId.isEmpty()) authManager.bindClientAccount(token, handoff->accountId);
         geoIpService.lookupIp(req.clientAddress,
                               [&authManager, token](const QString& city, const QString& country) {
                                   authManager.setSessionGeo(token, city, country);
@@ -478,6 +502,62 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         return HttpResponse::json(obj);
     });
 
+    server.router()->post("/api/admin/pin/admin/generate", [&authManager](const HttpRequest& req) {
+        if (!req.isLocal) return HttpResponse::error(403, "Admin required");
+        return HttpResponse::json(QJsonObject{{"pin", authManager.generateAdminPin()}});
+    });
+    server.router()->post("/api/admin/pin/admin/clear", [&authManager](const HttpRequest& req) {
+        if (!req.isLocal) return HttpResponse::error(403, "Admin required");
+        authManager.clearAdminPin();
+        return HttpResponse::json(QJsonObject{{"status", "ok"}});
+    });
+    server.router()->get("/api/admin/client-apps", [&settings](const HttpRequest& req) {
+        if (!req.isLocal) return HttpResponse::error(403, "Admin required");
+        return HttpResponse::json(QJsonObject{{"apps", settings.clientApps()}});
+    });
+    server.router()->post("/api/admin/client-apps", [&settings](const HttpRequest& req) {
+        if (!req.isLocal) return HttpResponse::error(403, "Admin required");
+        const auto apps = QJsonDocument::fromJson(req.body).object().value("apps");
+        if (!apps.isObject()) return HttpResponse::error(400, "Expected apps object");
+        const auto object = apps.toObject();
+        for (auto it = object.begin(); it != object.end(); ++it) {
+            if (!it.value().isArray()) return HttpResponse::error(400, "Expected app ID arrays");
+            for (const auto& id : it.value().toArray())
+                if (!id.isDouble() || id.toDouble() != id.toInt() || id.toInt() <= 0)
+                    return HttpResponse::error(400, "Expected positive integer app IDs");
+        }
+        settings.setClientApps(object);
+        return HttpResponse::json(QJsonObject{{"status", "ok"}});
+    });
+
+    server.router()->get("/api/admin/accounts", [&settings](const HttpRequest& req) {
+        if (!req.isLocal) return HttpResponse::error(403, "Admin required");
+        return HttpResponse::json(QJsonObject{{"accounts", settings.clientAccounts()}});
+    });
+    server.router()->post("/api/admin/accounts", [&settings, &authManager](const HttpRequest& req) {
+        if (!req.isLocal) return HttpResponse::error(403, "Admin required");
+        const auto body = QJsonDocument::fromJson(req.body).object();
+        auto accounts = settings.clientAccounts();
+        const QString action = body.value("action").toString();
+        const QString id = body.value("id").toString();
+        if (action == "create") {
+            const QString name = body.value("name").toString().trimmed();
+            if (name.isEmpty() || name.size() > 64 || name.contains(QChar::Null))
+                return HttpResponse::error(400, "Account name must contain 1–64 characters");
+            if (!authManager.clientAccountId(name).isEmpty())
+                return HttpResponse::error(409, "Account name already exists");
+            accounts[QUuid::createUuid().toString(QUuid::Id128)] = name;
+            settings.setClientAccounts(accounts);
+        } else if ((action == "delete" || action == "revoke") && accounts.contains(id)) {
+            authManager.revokeClientAccount(id);
+            if (action == "delete") {
+                accounts.remove(id);
+                settings.setClientAccounts(accounts);
+            }
+        } else return HttpResponse::error(400, "Invalid account action");
+        return HttpResponse::json(QJsonObject{{"accounts", accounts}});
+    });
+
     // GET /api/auth/status — check current auth status
     server.router()->get("/api/auth/status", [&authManager, &geoIpService](const HttpRequest& req) {
         QJsonObject obj;
@@ -487,6 +567,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         // Historical name: it means "has admin access", which since the remote
         // admin password is no longer the same thing as "is the host machine".
         obj["is_localhost"] = isLocal;
+        obj["role"] = isLocal ? "admin" : "client";
         obj["is_host_machine"] = req.isHostMachine;
         // --noadmin: nobody administers, the browser on the host still streams.
         obj["admin_locked"] = req.adminLocked;
@@ -497,6 +578,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         if (isLocal) {
             obj["authenticated"] = true; // localhost is always authenticated
             obj["pin"] = authManager.currentPin();
+            obj["admin_pin"] = authManager.currentAdminPin();
             obj["pin_consumed"] = authManager.isPinConsumed();
             obj["remote_admin_enabled"] = authManager.remoteAdminEnabled();
             obj["remote_admin_internet"] = authManager.remoteAdminInternet();
@@ -553,7 +635,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         // Mirrors exactly what /api/auth/admin-unlock will accept, so the
         // button never appears where the unlock would be refused.
         obj["admin_unlock_available"] =
-            !isLocal && !req.adminLocked && obj["authenticated"].toBool() &&
+            !req.testClient && !isLocal && !req.adminLocked && obj["authenticated"].toBool() &&
             authManager.remoteAdminEnabled() && authManager.adminPasswordSet() &&
             AuthManager::canUnlockAdmin(req.clientAddress, req.hostTrusted, req.viaTunnel,
                                         authManager.remoteAdminInternet());

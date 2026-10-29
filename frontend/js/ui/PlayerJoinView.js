@@ -415,7 +415,7 @@ export class PlayerJoinView {
                     </div>
                 </div>`
                 }
-                ${this.info.touch?.capabilities.gamepadMode && this._gamepadAllowed() ? `<div class="player-touch-options"><label>Mode <select data-touch-mode><option value="stream">Video + audio + gamepad</option>${this.info.touch.capabilities.gamepadMode ? '<option value="gamepad">Gamepad only</option>' : ''}</select></label><label>Input <select data-touch-source><option value="physical">Physical gamepad</option><option value="touch">On-screen gamepad</option></select></label><label>Profile <select data-touch-profile></select></label><label><input type="checkbox" data-touch-audio checked>Game audio</label></div>` : ''}
+                ${this.info.touch?.capabilities.gamepadMode && this._gamepadAllowed() ? `<div class="player-touch-options"><label>${t('touch.mode')} <select data-touch-mode><option value="stream">${t('touch.stream')}</option>${this.info.touch.capabilities.gamepadMode ? `<option value="gamepad">${t('touch.gamepadOnly')}</option>` : ''}</select></label><label>${t('touch.input')} <select data-touch-source><option value="physical">${t('touch.physicalGamepad')}</option><option value="touch">${t('touch.onScreen')}</option></select></label><label>${t('touch.profile')} <select data-touch-profile></select></label><label><input type="checkbox" data-touch-audio checked>${t('touch.gameAudio')}</label></div>` : ''}
                 ${this._inputToggles()}
                 ${this._gamepadAllowed() ? '<div class="player-gamepad"></div>' : ''}
                 <button class="btn btn-open player-join-btn" type="button">

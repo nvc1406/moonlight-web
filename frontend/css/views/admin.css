@@ -382,3 +382,24 @@
 .admin-logs-status:empty {
     display: none;
 }
+.host-app-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-3); }
+.host-app-selected { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); }
+.host-app-selected:empty { display: none; }
+.host-app-selected img { width: 48px; height: 64px; object-fit: contain; border-radius: 8px; }
+.host-program-picker { width: min(680px, 94vw); max-height: 85vh; padding: 24px; background: var(--bg-1, #171a21); color: var(--text-1, #eee); border: 1px solid var(--border-1, #444); border-radius: 16px; }
+.host-program-picker::backdrop { background: #000a; }
+.host-program-picker header, .host-program-picker form, .host-program-picker nav { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.host-program-picker header { justify-content: space-between; }
+.host-program-picker h3 { margin: 0; }
+.host-program-picker form input { flex: 1; min-width: 0; }
+.host-program-entries { display: grid; gap: 6px; max-height: 44vh; overflow-y: auto; margin-top: 12px; }
+.host-program-entry { text-align: left; overflow-wrap: anywhere; white-space: normal; }
+.host-app-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 12px; }
+.host-app-row { border: 1px solid var(--border-1); border-radius: 12px; padding: 12px; align-items: flex-start; }
+#host-app-details summary { cursor: pointer; margin-bottom: 12px; }
+.sessions-filter { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.sessions-filter [aria-pressed="true"] { border-color: var(--accent-1); }
+#admin-sessions-table { overflow-x: auto; }
+.host-app-profile-cards { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.host-app-profile-card { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; white-space: normal; text-align: left; }
+.host-app-profile-card small { opacity: .7; }

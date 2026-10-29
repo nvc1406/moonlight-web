@@ -12,6 +12,9 @@ import { HostListView } from '../js/ui/HostListView.js';
 import { Host } from '../js/models/Host.js';
 import { BackendClient } from '../js/api/BackendClient.js';
 
+// These fixtures exercise the admin library; clients fetch a permission-filtered list.
+BackendClient.isAdmin = true;
+
 /**
  * Issue #24 — Moonlight's model on a host whose app outlives the stream: Stop
  * leaves the game running, and its card is where the viewer gets back to it

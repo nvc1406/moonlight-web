@@ -463,11 +463,17 @@ void test_a_dropped_stream_does_not_end_the_share()
     mgr->setStreaming(kSlot, true);
     CHECK(mgr->isStreaming(kSlot));
     CHECK_EQ(mgr->streamingCount(), 1);
+    CHECK_EQ(mgr->status().at(kSlot - ShareManager::kFirstSlot).remoteMode, QStringLiteral("stream"));
+    CHECK(mgr->status().at(kSlot - ShareManager::kFirstSlot).remoteStartedAt > 0);
+    mgr->setStreaming(kSlot, true, QStringLiteral("gamepad"));
+    CHECK_EQ(mgr->status().at(kSlot - ShareManager::kFirstSlot).remoteMode, QStringLiteral("gamepad"));
+
 
     // The player's connection drops (tab closed, ICE dead, host hiccup).
     mgr->setStreaming(kSlot, false);
     CHECK(!mgr->isStreaming(kSlot));
     CHECK_EQ(mgr->streamingCount(), 0);
+    CHECK(mgr->status().at(kSlot - ShareManager::kFirstSlot).remoteEndedAt > 0);
     CHECK(mgr->tokenIsLive(token));
 
     // The owner clicking the row is what ends it.
@@ -570,6 +576,8 @@ void test_persistence_survives_a_restart()
     // comes back without being asked for it again.
     CHECK(restarted->state(kSlot) == ShareManager::State::Binded);
     CHECK_EQ(restarted->streamingCount(), 0);
+    CHECK_EQ(restarted->status().at(kSlot - ShareManager::kFirstSlot).remoteMode, QStringLiteral("stream"));
+    CHECK(restarted->status().at(kSlot - ShareManager::kFirstSlot).remoteStartedAt > 0);
     CHECK_EQ(restarted->slotForCookie(ok.cookie), kSlot);
     CHECK(restarted->permissions(kSlot).gamepad);
 

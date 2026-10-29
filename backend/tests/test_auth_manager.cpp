@@ -21,6 +21,39 @@ void run_auth_manager_tests()
 
     AuthManager auth(&settings);
 
+    // Account IDs survive renames/restarts and scope device revocation.
+    settings.setClientAccounts(QJsonObject{{"account-a", "Player One"}});
+    CHECK_EQ(auth.clientAccountId(" player ONE "), QString("account-a"));
+    CHECK(auth.clientAccountId("Unknown").isEmpty());
+    AppSettings accountSettings;
+    accountSettings.m_FilePath = settings.m_FilePath;
+    CHECK_EQ(accountSettings.clientAccounts().value("account-a").toString(), QString("Player One"));
+    const auto deviceA = auth.createSession("198.51.100.1", "Phone");
+    const auto deviceB = auth.createSession("198.51.100.2", "Tablet");
+    CHECK(auth.bindClientAccount(deviceA, "account-a"));
+    CHECK(auth.bindClientAccount(deviceB, "account-a"));
+    {
+        AuthManager restored(&accountSettings);
+        CHECK(restored.validateSession(deviceA));
+        CHECK_EQ(restored.sessionForToken(deviceA).accountId, QString("account-a"));
+    }
+    CHECK(!auth.bindClientAccount(deviceB, "unknown"));
+    CHECK(!auth.isAdminSession(deviceA));
+    const auto shortcut = auth.homeScreenKey(deviceA);
+    const auto handoff = auth.redeemHomeScreenKey(shortcut);
+    CHECK(handoff.has_value());
+    if (handoff) CHECK_EQ(handoff->accountId, QString("account-a"));
+    auth.revokeClientAccount("account-a");
+    CHECK(!auth.validateSession(deviceA));
+    CHECK(!auth.validateSession(deviceB));
+    const auto deleted = auth.createSession("198.51.100.3", "Old phone");
+    CHECK(auth.bindClientAccount(deleted, "account-a"));
+    const auto deletedShortcut = auth.homeScreenKey(deleted);
+    settings.setClientAccounts({});
+    CHECK(!auth.validateSession(deleted));
+    CHECK(!auth.redeemHomeScreenKey(deletedShortcut).has_value());
+    auth.destroyAllSessions();
+
     // ── PIN lifecycle ──────────────────────────────────────────────────────
     QString pin = auth.generatePin();
     CHECK(!pin.isEmpty());
@@ -29,6 +62,24 @@ void run_auth_manager_tests()
     // Valid PIN from a fresh IP.
     auto ok = auth.validatePin("198.51.100.10", pin);
     CHECK(ok.result == AuthManager::Valid);
+
+    // Admin PINs are independent and share the brute-force budget with client PINs.
+    const QString adminPin = auth.generateAdminPin();
+    CHECK(adminPin != pin);
+    CHECK(auth.validatePin("198.51.100.40", pin, true).result == AuthManager::InvalidPin);
+    CHECK(auth.validatePin("198.51.100.41", adminPin).result == AuthManager::InvalidPin);
+    CHECK(auth.validatePin("198.51.100.42", adminPin, true).result == AuthManager::Valid);
+    auth.clearAdminPin();
+    CHECK(auth.validatePin("198.51.100.43", adminPin, true).result == AuthManager::InvalidPin);
+    CHECK(!settings.clientAppAllowed("host-a", 42));
+    settings.setClientApps(QJsonObject{{"host-a", QJsonArray{42}}});
+    CHECK(settings.clientAppAllowed("host-a", 42));
+    CHECK(!settings.clientAppAllowed("host-b", 42));
+    CHECK(!settings.clientAppAllowed("host-a", 43));
+    CHECK(!settings.clientAppAllowed("host-a", 0));
+    AppSettings reloaded;
+    reloaded.m_FilePath = settings.m_FilePath;
+    CHECK(reloaded.clientAppAllowed("host-a", 42));
 
     // clearPin invalidates.
     auth.clearPin();
@@ -68,9 +119,21 @@ void run_auth_manager_tests()
     CHECK(auth.renameSession(id, "Renamed"));
     CHECK(!auth.renameSession("unknown-id", "x"));
 
+    CHECK_EQ(auth.sessionForToken(token).remoteMode, QStringLiteral("stream"));
+    CHECK(auth.sessionForToken(token).remoteStartedAt > 0);
+    auth.setSessionStreaming(token, false);
+    CHECK(auth.sessionForToken(token).remoteEndedAt > 0);
+    auth.setSessionStreaming(token, true, QStringLiteral("gamepad"));
+    CHECK_EQ(auth.sessionForToken(token).remoteMode, QStringLiteral("gamepad"));
+    CHECK_EQ(auth.sessionForToken(token).remoteEndedAt, 0);
+
     // Persistence round-trip.
     auth.saveSessions();
     auth.loadSessions();
+
+    CHECK(!auth.sessionForToken(token).streaming);
+    CHECK_EQ(auth.sessionForToken(token).remoteMode, QStringLiteral("gamepad"));
+    CHECK(auth.sessionForToken(token).remoteStartedAt > 0);
 
     // Revoking a session that is actively streaming must request stream teardown.
     int revokedFired = 0;
@@ -100,6 +163,13 @@ void run_auth_manager_tests()
     const QString tokA = auth.createSession("198.51.100.30", "A");
     const QString tokB = auth.createSession("198.51.100.31", "B");
     const QString tokC = auth.createSession("198.51.100.32", "C");
+    auth.setSessionStreaming(tokA, true);
+    auth.setSessionStreaming(tokB, true, QStringLiteral("gamepad"));
+    CHECK(auth.sessionForToken(tokA).streaming);
+    CHECK(auth.sessionForToken(tokB).streaming);
+    auth.setSessionStreaming(tokB, false);
+    CHECK(auth.sessionForToken(tokA).streaming);
+    CHECK(!auth.sessionForToken(tokB).streaming);
     QList<SessionInfo> ordered = auth.sessions();
     CHECK_EQ(ordered.size(), 3);
     for (int i = 1; i < ordered.size(); ++i) {

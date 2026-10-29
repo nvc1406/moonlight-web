@@ -13,15 +13,17 @@ nav button { padding:8px; background:#263b5d; color:white; border:1px solid #6c8
 .synthetic-frame { position:absolute; inset:0; display:grid; place-items:center; background:linear-gradient(25deg,#214837,#3c7582 55%,#4e6a35); font-size:22px; }
 .synthetic-frame::after { content:'Synthetic game frame'; padding:10px; border-radius:8px; background:#0005; }
 .gamepad-only .synthetic-frame { display:none; }
-.touch-toolbar { top:8px; }
+.stream-header { height:56px; box-sizing:border-box; display:flex; justify-content:center; gap:8px; align-items:center; background:#111; }
+#canvas { position:absolute; inset:56px 0 0; }
 output { display:block; margin-top:12px; white-space:pre-wrap; }
 </style>
 <h1>Touch gamepad UI preview</h1>
 <p>Local visual fixture using the real controls and editor. No host input or microphone is captured.</p>
-<nav><button id="video">Video + audio + gamepad</button><button id="pad">Gamepad only</button><button id="rotate">Rotate</button><button id="editor">Open profile editor</button></nav>
-<div id="phone"><div class="synthetic-frame"></div></div>
+<nav><button id="video">Video + audio + gamepad</button><button id="pad">Gamepad only</button><button id="rotate">Rotate</button><button id="connect">Connect options</button><button id="editor">Open profile editor</button></nav>
+<div id="phone"><div class="stream-header"><button>Volume</button><button>Fullscreen</button></div><div id="canvas"><div class="synthetic-frame"></div></div></div>
 <output id="state">Touch a button or joystick.</output>
 <script type="module">
+import { ConnectDialog } from '/js/touch/ConnectDialog.js';
 import { TouchControls } from '/js/touch/TouchControls.js';
 import { ProfileEditor } from '/js/touch/ProfileEditor.js';
 import { BackendClient } from '/js/api/BackendClient.js';
@@ -30,7 +32,7 @@ let doc = { version:1, revision:0, games:[{host:'preview',appId:42,name:'Demo ga
     stream:{defaultProfileId:'video',profiles:[{...builtin('stream'),id:'video',name:'Video overlay'}]},
     gamepad:{defaultProfileId:'pad',profiles:[{...builtin('gamepad'),id:'pad',name:'Full-screen gamepad'}]}
 }}]};
-BackendClient.get = async path => path === '/api/touch/profiles' ? clone(doc) : ({game:clone(doc.games[0]),revision:doc.revision,owner:true,capabilities:{gamepadMode:true,voice:false}});
+BackendClient.get = async path => path.includes('/api/touch/capabilities') ? {gamepadMode:true} : path.startsWith('/api/touch/game?') ? clone(doc.games[0]) : path === '/api/touch/profiles' ? clone(doc) : ({game:clone(doc.games[0]),revision:doc.revision,owner:true,capabilities:{gamepadMode:true,voice:false}});
 BackendClient.post = async (path, body) => { if(path === '/api/touch/profiles') doc={...clone(body),revision:doc.revision+1}; return clone(doc); };
 BackendClient.getHosts = async () => ({hosts:[{uuid:'preview',name:'Preview PC'}]});
 BackendClient.getAppList = async () => ({apps:[{id:42,name:'Demo game'}]});
@@ -38,12 +40,13 @@ const phone=document.getElementById('phone');
 let controls;
 async function show(mode){
     controls?.destroy();phone.classList.toggle('gamepad-only',mode==='gamepad');
-    controls = new TouchControls({_rootEl:phone,canvasArea:phone,_playerMode:false,webrtc:{send:message=>document.getElementById('state').textContent=JSON.stringify(message)},_gamepadManager:null},{controllerOnly:mode==='gamepad',touchSource:true,onModeChange:show});
+    controls = new TouchControls({_rootEl:phone,canvasArea:document.getElementById('canvas'),_playerMode:false,webrtc:{send:message=>document.getElementById('state').textContent=JSON.stringify(message)},_gamepadManager:null},{controllerOnly:mode==='gamepad',touchSource:true,onModeChange:show});
     await controls.start();
 }
 document.getElementById('video').onclick=()=>show('stream');
 document.getElementById('pad').onclick=()=>show('gamepad');
 document.getElementById('rotate').onclick=()=>phone.classList.toggle('portrait');
+document.getElementById('connect').onclick=()=>ConnectDialog.open({uuid:'preview',backendType:'native'},{id:42,name:'Demo game'});
 document.getElementById('editor').onclick=()=>ProfileEditor.open();
 show('stream');
 </script>

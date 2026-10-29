@@ -24,6 +24,28 @@ describe('owner profile editor', () => {
         vi.restoreAllMocks();
         document.body.replaceChildren();
     });
+    it('opens the profile of the app clicked in administration', async () => {
+        BackendClient.getAppList.mockResolvedValue({
+            apps: [
+                { id: 1, name: 'First' },
+                { id: 42, name: 'Chosen' },
+            ],
+        });
+        editor = await ProfileEditor.open({ host: 'pc', appId: 42 });
+        expect(editor.game().appId).toBe(42);
+        expect(editor.root.querySelector('[data-field="game"]').value).toBe('1');
+    });
+    it('opens an offline app in the clicked mode instead of another game', async () => {
+        editor = await ProfileEditor.open({
+            host: 'offline',
+            appId: 99,
+            mode: 'gamepad',
+            name: 'Offline game',
+        });
+        expect(editor.game().appId).toBe(99);
+        expect(editor.game().host).toBe('offline');
+        expect(editor.mode).toBe('gamepad');
+    });
     it('creates independent profiles in each mode and saves a versioned document', async () => {
         editor = await ProfileEditor.open();
         await editor.action('new');

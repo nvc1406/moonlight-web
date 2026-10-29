@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { VoiceChat } from '../js/touch/VoiceChat.js';
 import { BackendClient } from '../js/api/BackendClient.js';
+import { t } from '../js/i18n/i18n.js';
 
 describe('voice capture is explicit and independent of gamepad', () => {
     let voice, stop, getUserMedia;
@@ -69,7 +70,7 @@ describe('voice capture is explicit and independent of gamepad', () => {
     });
     it('does not request permission once its voice membership has ended', async () => {
         voice.destroy();
-        await expect(voice.setMic(true)).rejects.toThrow('disconnected');
+        await expect(voice.setMic(true)).rejects.toThrow(t('touch.voiceDisconnected'));
         expect(getUserMedia).not.toHaveBeenCalled();
     });
 });

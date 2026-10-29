@@ -237,56 +237,6 @@
     white-space: nowrap;
 }
 
-/* Buy me a coffee (util/supportNudge.js says when it shows): the yellow of
-   "Add manually" (.btn-neutral), with the official cup. .btn's display would
-   beat the [hidden] attribute, hence the explicit rule. */
-.header-btn-bmc {
-    text-decoration: none;
-}
-.header-btn-bmc[hidden] {
-    display: none;
-}
-.header-btn-bmc-logo {
-    display: inline-flex;
-}
-.bmc-logo {
-    width: auto;
-    height: 1.4em;
-    flex-shrink: 0;
-}
-/* The cup with its wordmark (bmcLogo.js), where the button has room for a
-   name. The brand draws the words near-black; on these dark, yellow-tinted
-   buttons they are white. The cup alone stands in for it on a phone. */
-.bmc-full-logo {
-    width: auto;
-    height: 1.9em;
-    flex-shrink: 0;
-    color: #fff;
-}
-.header-btn-bmc-full {
-    display: inline-flex;
-}
-.header-btn-bmc .header-btn-bmc-logo {
-    display: none;
-}
-/* The visit it first appears on, it lights up a few times, then settles —
-   inside the button: the notched clip-path would cut any glow around it. */
-.header-btn-bmc.is-new {
-    animation: bmc-intro 1.2s ease-in-out 5;
-}
-@keyframes bmc-intro {
-    50% {
-        background: rgba(252, 238, 10, 0.34);
-        color: var(--accent-strong);
-    }
-}
-@media (prefers-reduced-motion: reduce) {
-    .header-btn-bmc.is-new {
-        animation: none;
-        background: rgba(252, 238, 10, 0.2);
-    }
-}
-
 /* ── Main content — the ONLY scroll container of the app ────────────────── */
 #main-content {
     flex: 1;
@@ -388,27 +338,34 @@ html.remote-nav .app-header {
         display: none;
     }
 
-    /* Three icons, no names: Buy me a coffee, Admin, Settings. The coffee
-       drops its yellow box to look like its two neighbours; the cup keeps
-       its yellow coffee. Scoped to .header-actions to outweigh .btn-neutral,
-       which components.css loads after this file. */
+    /* Show navigation icons on phones. */
     .header-btn-label {
         display: none;
-    }
-    .header-btn-bmc .header-btn-bmc-logo {
-        display: inline-flex;
     }
     .btn-icon.has-label {
         width: 38px;
         padding: 0;
     }
-    .header-actions .header-btn-bmc {
-        width: 38px;
-        height: 38px;
-        padding: 0;
-        color: var(--text-2);
-        background: transparent;
-        box-shadow: none;
-        clip-path: none;
-    }
+}
+.client-test-banner {
+    display: flex;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 20px;
+    background: var(--accent-soft);
+    border-bottom: 1px solid var(--border-1);
+    color: var(--text-1);
+    font-size: 14px;
+}
+
+.client-test-banner a {
+    color: inherit;
+    text-decoration: underline;
+}
+
+body.streaming-active .client-test-banner {
+    display: none;
 }

@@ -23,3 +23,16 @@
 .touch-toolbar.is-open { width:max-content; }
 
 .touch-editor select,.touch-editor input { max-width:100%; min-width:0; }
+
+.touch-toolbar { left:max(8px,env(safe-area-inset-left)); transform:none; max-width:calc(100% - 16px); box-sizing:border-box; }
+.touch-toolbar:not(.is-open) { max-width:calc(100% - 16px); }
+.touch-toolbar:not(.is-open) .touch-status { display:none; }
+.touch-toolbar.is-open { max-height:calc(100% - 16px); overflow:auto; }
+.touch-connect { width:min(440px,calc(100vw - 32px)); max-height:calc(100dvh - 32px); box-sizing:border-box; overflow:auto; border:1px solid #6984aa; border-radius:12px; padding:20px; background:#101827; color:white; font:14px system-ui; }
+.touch-connect::backdrop { background:#000b; }
+.touch-connect h2 { font-size:18px; margin:0 0 18px; }
+.touch-connect label { display:flex; flex-direction:column; gap:6px; margin:12px 0; }
+.touch-connect select,.touch-connect button { font:inherit; padding:10px; border:1px solid #6984aa; border-radius:5px; background:#243552; color:white; max-width:100%; }
+.touch-connect .touch-connect-audio { flex-direction:row; align-items:center; }
+.touch-connect p { color:#b6cbe6; line-height:1.5; }
+.touch-connect footer { display:flex; justify-content:flex-end; gap:10px; }

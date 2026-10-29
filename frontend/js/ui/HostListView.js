@@ -541,7 +541,7 @@ export class HostListView {
         // An update in flight owns the banner (progress bar); never repaint over it.
         if (hostUpdate.busy) return;
         // A booth's visitors can do nothing about an update: the banner stays hidden.
-        if (BackendClient.adminLocked) return;
+        if (BackendClient.adminLocked || !BackendClient.isAdmin) return;
         // Wait for the host list: painting "update the host PC by hand" and then
         // flipping it to a one-click button a second later reads as a glitch.
         if (!this._hostsLoaded) return;
@@ -635,7 +635,7 @@ export class HostListView {
 
     async _autoScan() {
         // A booth offers the hosts it was given; discovery would add others.
-        if (!this._active || BackendClient.adminLocked) return;
+        if (!this._active || BackendClient.adminLocked || !BackendClient.isAdmin) return;
         try {
             await BackendClient.scanHosts();
         } catch (err) {
@@ -829,7 +829,7 @@ export class HostListView {
                     <h2>${t('hosts.title')}</h2>
                     <div class="hosts-actions">
                         ${
-                            BackendClient.adminLocked
+                            BackendClient.adminLocked || !BackendClient.isAdmin
                                 ? ''
                                 : `<button class="btn btn-neutral" id="btn-manual">${t('hosts.addManually')}</button>`
                         }
@@ -864,6 +864,10 @@ export class HostListView {
         // second program before we have even looked would be a poor greeting on
         // a machine that has three hosts.
         if (this.hosts.length === 0) {
+            if (!BackendClient.isAdmin) {
+                list.innerHTML = `<div class="hosts-empty"><p>${t('access.empty')}</p></div>`;
+                return;
+            }
             list.innerHTML = `
                 <div class="hosts-empty">
                     <span class="empty-icon">\u{1F5B4}</span>
@@ -970,7 +974,7 @@ export class HostListView {
         const cls = host.statusClass;
         // Booth mode leaves the menu one entry, Stop session, and hides it
         // while there is no app to stop.
-        const booth = BackendClient.adminLocked;
+        const booth = BackendClient.adminLocked || !BackendClient.isAdmin;
         return `
             <div class="host-card ${cls}" data-uuid="${host.uuid}">
                 <div class="host-card-head">
@@ -987,7 +991,9 @@ export class HostListView {
                     </div>
                     <span class="status-badge ${cls}">${host.statusLabel}</span>
                     <div class="host-card-menu"${
-                        booth && !(host.currentGameId > 0) ? ' style="display: none"' : ''
+                        !BackendClient.isAdmin || (booth && !(host.currentGameId > 0))
+                            ? ' style="display: none"'
+                            : ''
                     }>
                         <button class="btn-icon btn-host-menu" data-uuid="${host.uuid}"
                                 aria-haspopup="true" aria-expanded="false"
@@ -1094,7 +1100,7 @@ export class HostListView {
             return `<div class="host-body-center host-empty-display">
                         <p class="host-empty-display-text">${t('hosts.nativeCapturePermission')}</p>
                         ${
-                            BackendClient.adminLocked
+                            BackendClient.adminLocked || !BackendClient.isAdmin
                                 ? ''
                                 : `<button class="btn btn-secondary btn-mac-perm" data-pane="screen">${t('setup.openScreenRecording')}</button>`
                         }
@@ -1106,7 +1112,7 @@ export class HostListView {
             // the grid, since macOS says nothing.
             const inputWarn = host.lacksInputPermission
                 ? `<div class="host-perm-warn"><p>${t('hosts.nativeInputPermission')}</p>${
-                      BackendClient.adminLocked
+                      BackendClient.adminLocked || !BackendClient.isAdmin
                           ? ''
                           : `<button class="btn btn-secondary btn-mac-perm" data-pane="accessibility">${t('setup.openAccessibility')}</button>`
                   }</div>`
@@ -1114,13 +1120,13 @@ export class HostListView {
             return inputWarn + `<div class="host-apps" data-uuid="${host.uuid}"></div>`;
         }
         // A booth pairs nothing: an unpaired host just shows its badge.
-        if (host.isLocked && BackendClient.adminLocked) return '';
+        if (host.isLocked && (BackendClient.adminLocked || !BackendClient.isAdmin)) return '';
         if (host.isLocked) {
             return `<div class="host-body-center">
                         <button class="btn btn-secondary btn-pair" data-uuid="${host.uuid}">${t('common.pair')}</button>
                     </div>`;
         }
-        if (host.canWake) {
+        if (host.canWake && BackendClient.isAdmin) {
             return `<div class="host-body-center">
                         <button class="btn btn-secondary btn-wol" data-uuid="${host.uuid}"
                                 title="${this.esc(t('hosts.wakeTitle'))}">${Icons.power}${t('hosts.wakeBtn')}</button>
@@ -1174,7 +1180,7 @@ export class HostListView {
         // First sight of this host in this session: adopt what the last visit
         // saw so there is something to draw right now.
         if (!entry) {
-            const remembered = loadCachedApps(uuid);
+            const remembered = BackendClient.isAdmin ? loadCachedApps(uuid) : null;
             if (remembered) {
                 entry = {
                     apps: sortApps(remembered.map((a) => new App(a, uuid))),
@@ -1499,7 +1505,7 @@ export class HostListView {
                 </div>
                 <div class="app-card-name">${this.esc(app.displayName)}</div>
                 ${
-                    running
+                    running && BackendClient.isAdmin
                         ? `<button type="button" class="app-card-quit" data-app-id="${app.id}"
                                 aria-label="${this.esc(t('apps.quitAria', { name: app.displayName }))}">${this.esc(t('apps.quit'))}</button>`
                         : ''

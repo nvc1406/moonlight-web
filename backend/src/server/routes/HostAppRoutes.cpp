@@ -27,6 +27,10 @@
 #include "server/RestRouter.h"
 
 #include <QCoreApplication>
+#include <QBuffer>
+#include <QDir>
+#include <QFileInfo>
+#include <QStandardPaths>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -114,6 +118,76 @@ void registerHostAppRoutes(HttpServer& server, AppSettings& appSettings)
     server.router()->get("/api/host-apps", [&appSettings](const HttpRequest& req) {
         if (!req.isLocal) return adminOnly();
         return HttpResponse::json(listJson(appSettings));
+    });
+
+    // Browse the host filesystem, never the browser client's upload directory.
+    // This endpoint shares the same administrator guard as app configuration.
+    server.router()->post("/api/host-apps/browse", [](const HttpRequest& req) {
+        if (!req.isLocal) return adminOnly();
+        const QString path = QJsonDocument::fromJson(req.body).object()["path"].toString();
+        if (path.isEmpty()) {
+            QJsonArray entries;
+            QStringList roots{QDir::homePath(),
+                QStandardPaths::writableLocation(QStandardPaths::DesktopLocation)};
+            for (const QFileInfo& drive : QDir::drives()) roots.append(drive.absoluteFilePath());
+#ifdef Q_OS_WIN
+            roots.append(qEnvironmentVariable("ProgramFiles"));
+            roots.append(qEnvironmentVariable("ProgramFiles(x86)"));
+            roots.append(qEnvironmentVariable("LOCALAPPDATA") + QStringLiteral("/Programs"));
+#endif
+            roots.removeDuplicates();
+            for (const QString& root : roots) {
+                if (root.isEmpty() || !QFileInfo(root).isDir()) continue;
+                entries.append(QJsonObject{{"name", QDir::toNativeSeparators(root)},
+                                            {"path", root}, {"directory", true}});
+            }
+            return HttpResponse::json(QJsonObject{{"path", ""}, {"parent", ""},
+                                                  {"entries", entries}});
+        }
+        const QFileInfo target(path);
+        if (!target.isAbsolute() || !target.isDir() || !target.isReadable())
+            return HttpResponse::error(400, "Choose a readable folder on the host PC");
+        const QDir dir(target.canonicalFilePath());
+        QJsonArray entries;
+        for (const QFileInfo& file : dir.entryInfoList(QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot,
+                                                       QDir::DirsFirst | QDir::Name | QDir::IgnoreCase)) {
+#ifdef Q_OS_WIN
+            const bool program = file.suffix().compare("exe", Qt::CaseInsensitive) == 0;
+#else
+            const bool program = file.isExecutable() || file.suffix() == "app";
+#endif
+            if (!file.isDir() && !program) continue;
+            entries.append(QJsonObject{{"name", file.fileName()}, {"path", file.absoluteFilePath()},
+                                        {"directory", file.isDir()}});
+        }
+        QDir parent = dir;
+        parent.cdUp();
+        return HttpResponse::json(QJsonObject{{"path", dir.absolutePath()},
+            {"parent", parent.absolutePath()}, {"entries", entries}});
+    });
+    server.router()->post("/api/host-apps/inspect", [](const HttpRequest& req) {
+        if (!req.isLocal) return adminOnly();
+        const QFileInfo file(QJsonDocument::fromJson(req.body).object()["path"].toString());
+#ifdef Q_OS_WIN
+        const bool program = file.isFile() && file.suffix().compare("exe", Qt::CaseInsensitive) == 0;
+#else
+        const bool program = (file.isFile() && file.isExecutable()) ||
+                             (file.isDir() && file.suffix() == "app");
+#endif
+        if (!file.isAbsolute() || !file.exists() || !file.isReadable() || !program)
+            return HttpResponse::error(400, "Choose an executable on the host PC");
+        const QString path = QDir::toNativeSeparators(file.canonicalFilePath());
+        QJsonObject result{{"name", file.completeBaseName().left(40)},
+                            {"command", QStringLiteral("\"%1\"").arg(path)}};
+        const QImage icon = HostAppImage::iconOf(path);
+        if (!icon.isNull()) {
+            QByteArray png;
+            QBuffer buffer(&png);
+            buffer.open(QIODevice::WriteOnly);
+            HostAppImage::cardFromIcon(icon).save(&buffer, "PNG");
+            result["png"] = QString::fromLatin1(png.toBase64());
+        }
+        return HttpResponse::json(result);
     });
 
     server.router()->post("/api/host-apps", [&appSettings](const HttpRequest& req) {

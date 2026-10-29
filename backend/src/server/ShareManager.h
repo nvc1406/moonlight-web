@@ -154,6 +154,9 @@ public:
         State state = State::Off;
         QString name; ///< owner-given label, empty means "Player N"
         Permissions permissions;
+        QString remoteMode;
+        qint64 remoteStartedAt = 0;
+        qint64 remoteEndedAt = 0;
         bool streaming = false; ///< orthogonal to state: a Binded row may be idle
         qint64 ttlSecs = kTtlSecs;
         qint64 expiresAt = 0; ///< unix secs; 0 when Off or unlimited
@@ -289,7 +292,7 @@ public:
 
     /// Mark a player's stream as up or down. Dropping to false keeps the
     /// activation alive (an automatic disconnect must never end the share).
-    void setStreaming(int slot, bool streaming);
+    void setStreaming(int slot, bool streaming, const QString& mode = QStringLiteral("stream"));
 
     Permissions permissions(int slot);
     State state(int slot);
@@ -354,6 +357,9 @@ private:
         qint64 expiresAtSecs = 0;
         qint64 activatedAt = 0;
         int pinFailures = 0;
+        QString remoteMode;
+        qint64 remoteStartedAt = 0;
+        qint64 remoteEndedAt = 0;
         bool streaming = false; ///< runtime only, never persisted
 
         /// A correct PIN from a device this activation had no room for. Kept so

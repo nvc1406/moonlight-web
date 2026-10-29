@@ -71,6 +71,36 @@ describe('AdminView — apps on this PC', () => {
         view.destroy();
     });
 
+    it('keeps the automatically extracted icon when adding a selected executable', async () => {
+        const added = {
+            id: 'new',
+            app_id: 2002,
+            name: 'Chosen',
+            command: '"C:\\Games\\Chosen.exe"',
+        };
+        BackendClient.saveHostApps.mockResolvedValue(state([added]));
+        BackendClient.setHostAppImage.mockResolvedValue(state([{ ...added, image: 'icon-hash' }]));
+        await view._addHostApp({ name: added.name, command: added.command }, null, 'extracted-png');
+        expect(BackendClient.setHostAppImage).toHaveBeenCalledWith('new', 'extracted-png');
+        expect(view._hostApps[0].image).toBe('icon-hash');
+    });
+    it('renders named profile cards in their app and mode', () => {
+        view._hostApps = [A];
+        view._touchProfiles = {
+            games: [
+                {
+                    host: 'moonlightweb-native-host',
+                    appId: A.app_id,
+                    modes: { gamepad: { profiles: [{ id: 'pad-custom', name: '<Custom pad>' }] } },
+                },
+            ],
+        };
+        mount();
+        const card = document.querySelector('[data-profile-id="pad-custom"]');
+        expect(card.textContent).toContain('<Custom pad>');
+        expect(card.dataset.profileMode).toBe('gamepad');
+        expect(card.querySelector('custom')).toBeNull();
+    });
     it('reads the apps, the limit, where they open and what this PC has', async () => {
         BackendClient.getHostApps.mockResolvedValue(
             state([A], {

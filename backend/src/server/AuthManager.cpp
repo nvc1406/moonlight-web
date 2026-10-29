@@ -172,11 +172,18 @@ void AuthManager::loadSessions()
         info.token = obj["token"].toString();
         info.ip = obj["ip"].toString();
         info.machineName = obj["machine_name"].toString();
+        info.accountId = obj["account_id"].toString();
         info.city = obj["city"].toString();
         info.country = obj["country"].toString();
         info.createdAt = static_cast<qint64>(obj["created_at"].toDouble());
         info.lastSeen = obj.contains("last_seen") ? static_cast<qint64>(obj["last_seen"].toDouble())
                                                   : info.createdAt;
+        info.remoteMode = obj["remote_mode"].toString();
+        info.remoteStartedAt = static_cast<qint64>(obj["remote_started_at"].toDouble());
+        info.remoteEndedAt = static_cast<qint64>(obj["remote_ended_at"].toDouble());
+        // A running worker cannot survive this process restarting.
+        if (obj["streaming"].toBool() && info.remoteStartedAt > 0)
+            info.remoteEndedAt = qMax(info.remoteEndedAt, info.lastSeen);
         info.isHost = obj["is_host"].toBool(false);
         info.viaTunnel = obj["via_tunnel"].toBool(false);
         info.isAdmin = keepAdminFlags && obj["is_admin"].toBool(false);
@@ -207,7 +214,7 @@ void AuthManager::loadSessions()
 
 QString AuthManager::generatePin()
 {
-    m_currentPin = generatePinInternal();
+    do { m_currentPin = generatePinInternal(); } while (m_currentPin == m_adminPin);
     m_pinConsumed = false; // fresh PIN, never used
     Logger::info("[Auth] New PIN generated");
     emit pinChanged(m_currentPin);
@@ -226,7 +233,7 @@ void AuthManager::autoRegeneratePin()
 {
     // Generate a new PIN immediately after a successful validation.
     // Does NOT invalidate existing sessions — they remain active.
-    m_currentPin = generatePinInternal();
+    do { m_currentPin = generatePinInternal(); } while (m_currentPin == m_adminPin);
     m_pinConsumed = true; // mark as consumed — admin must generate fresh PIN
     Logger::info("[Auth] PIN auto-regenerated after successful validation");
     emit pinChanged(m_currentPin);
@@ -498,7 +505,23 @@ AuthManager::ValidateResult AuthManager::recordAttempt(const QString& bucket, bo
     return {InvalidPin, bucketRemainingAttempts(bucket), bucketLockout(bucket)};
 }
 
-AuthManager::ValidateResult AuthManager::validatePin(const QString& ip, const QString& pin)
+QString AuthManager::generateAdminPin()
+{
+    do { m_adminPin = generatePinInternal(); } while (m_adminPin == m_currentPin);
+    return m_adminPin;
+}
+
+bool AuthManager::clientHostAllowed(const QString& host) const
+{
+    return m_settings && !m_settings->clientApps().value(host).toArray().isEmpty();
+}
+
+bool AuthManager::clientAppAllowed(const QString& host, int appId) const
+{
+    return m_settings && m_settings->clientAppAllowed(host, appId);
+}
+
+AuthManager::ValidateResult AuthManager::validatePin(const QString& ip, const QString& pin, bool admin)
 {
     cleanupExpired();
 
@@ -510,7 +533,8 @@ AuthManager::ValidateResult AuthManager::validatePin(const QString& ip, const QS
 
     // Compare PIN (constant-time). Reject when no valid PIN has been generated,
     // otherwise a client submitting the "--------" sentinel would authenticate.
-    const bool matched = hasValidPin() && constantTimeEquals(pin, m_currentPin);
+    const bool matched = admin ? (!m_adminPin.isEmpty() && constantTimeEquals(pin, m_adminPin))
+                               : (hasValidPin() && constantTimeEquals(pin, m_currentPin));
     return recordAttempt(bucket, matched, ip, QStringLiteral("PIN"));
 }
 
@@ -651,6 +675,32 @@ AuthManager::ValidateResult AuthManager::validateAdminPassword(const QString& ip
     return result;
 }
 
+QString AuthManager::clientAccountId(const QString& name) const
+{
+    if (!m_settings) return {};
+    const auto accounts = m_settings->clientAccounts();
+    for (auto it = accounts.begin(); it != accounts.end(); ++it)
+        if (it.value().toString().compare(name.trimmed(), Qt::CaseInsensitive) == 0) return it.key();
+    return {};
+}
+
+bool AuthManager::bindClientAccount(const QString& token, const QString& accountId)
+{
+    auto it = m_sessions.find(hashToken(token));
+    if (it == m_sessions.end() || !m_settings ||
+        !m_settings->clientAccounts().contains(accountId)) return false;
+    it->accountId = accountId;
+    if (!it->ephemeral) saveSessions();
+    return true;
+}
+
+void AuthManager::revokeClientAccount(const QString& accountId)
+{
+    const auto all = sessions();
+    for (const auto& session : all)
+        if (session.accountId == accountId) destroySession(session.token);
+}
+
 QString AuthManager::createSession(const QString& ip, const QString& machineName, bool isHost,
                                    bool ephemeral, bool viaTunnel)
 {
@@ -695,6 +745,8 @@ bool AuthManager::validateSession(const QString& token) const
     if (token.isEmpty()) return false;
     auto it = m_sessions.find(hashToken(token));
     if (it == m_sessions.end()) return false;
+    if (!it->accountId.isEmpty() && (!m_settings ||
+        !m_settings->clientAccounts().contains(it->accountId))) return false;
     // Sliding expiration: reject (but do not mutate, this is const) sessions
     // inactive past the TTL — the periodic purge removes them.
     const qint64 now = QDateTime::currentSecsSinceEpoch();
@@ -857,33 +909,23 @@ bool AuthManager::updateSessionAddress(const QString& token, const QString& ip)
     return true;
 }
 
-void AuthManager::setSessionStreaming(const QString& token, bool streaming)
+void AuthManager::setSessionStreaming(const QString& token, bool streaming, const QString& mode)
 {
-    if (token.isEmpty()) return; // localhost streams have no session row to flag
-
-    const QString id = hashToken(token);
-    bool changed = false;
-
-    // Enforce a single active stream: clear any other session's flag.
+    if (token.isEmpty()) return;
+    auto it = m_sessions.find(hashToken(token));
+    if (it == m_sessions.end()) return;
+    const QString remoteMode = mode == "gamepad" ? QStringLiteral("gamepad") : QStringLiteral("stream");
+    if (it->streaming == streaming && (!streaming || it->remoteMode == remoteMode)) return;
+    it->streaming = streaming;
     if (streaming) {
-        for (auto it = m_sessions.begin(); it != m_sessions.end(); ++it) {
-            if (it.key() != id && it->streaming) {
-                it->streaming = false;
-                changed = true;
-            }
-        }
+        it->remoteMode = remoteMode;
+        it->remoteStartedAt = QDateTime::currentSecsSinceEpoch();
+        it->remoteEndedAt = 0;
+    } else {
+        it->remoteEndedAt = QDateTime::currentSecsSinceEpoch();
     }
-
-    auto it = m_sessions.find(id);
-    if (it != m_sessions.end() && it->streaming != streaming) {
-        it->streaming = streaming;
-        changed = true;
-    }
-
-    if (changed) {
-        saveSessions();
-        emit sessionsChanged();
-    }
+    saveSessions();
+    emit sessionsChanged();
 }
 
 QString AuthManager::homeScreenKey(const QString& token, qint64 nowSecs)
@@ -936,7 +978,9 @@ std::optional<AuthManager::HomeScreenHandoff> AuthManager::redeemHomeScreenKey(c
     const qint64 last = session->lastSeen > 0 ? session->lastSeen : session->createdAt;
     if (QDateTime::currentSecsSinceEpoch() - last > ttlFor(*session)) return std::nullopt;
 
-    return HomeScreenHandoff{session->machineName, m_homeScreenInstances.value(sessionId)};
+    if (!session->accountId.isEmpty() && (!m_settings ||
+        !m_settings->clientAccounts().contains(session->accountId))) return std::nullopt;
+    return HomeScreenHandoff{session->machineName, m_homeScreenInstances.value(sessionId), session->accountId};
 }
 
 void AuthManager::destroySession(const QString& token)

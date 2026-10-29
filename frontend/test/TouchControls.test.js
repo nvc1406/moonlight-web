@@ -62,6 +62,7 @@ describe('per-device touch controls in a shared game session', () => {
         controls = new TouchControls(view, { touchSource: true });
         await controls.start();
         expect(view.canvasArea.querySelector('.touch-gamepad')).not.toBeNull();
+        expect(view.canvasArea.querySelector('.touch-toolbar')).toBe(controls.bar);
         expect(view.webrtc.send).toHaveBeenCalledWith({ type: 'gameaudio', enabled: true });
         expect(view._gamepadManager.stop).toHaveBeenCalled();
         expect(controls.voice.setMic).not.toHaveBeenCalled();

@@ -216,6 +216,7 @@ Request describe(const HttpRequest& req)
 {
     Request out;
     out.method = req.method;
+    out.testClient = req.testClient;
     out.path = req.path;
     out.headers = req.headers;
     out.bodySize = req.body.size();
@@ -275,11 +276,11 @@ Decision evaluate(const Request& req, const Context& ctx)
     // domain it could: a TLS-terminating tunnel runs here and forwards every
     // visitor from loopback, so the pair (local peer, our domain) describes the
     // whole internet just as well as it describes the host.
-    d.localPrivilege = ctx.peerLocal && isLocalHostName(hostHeader);
+    d.localPrivilege = !req.testClient && ctx.peerLocal && isLocalHostName(hostHeader);
 
     // Two ways to be the host machine: reach us from the machine itself, or
     // prove it with the host key over the public domain.
-    d.hostMachine = d.localPrivilege || ctx.hostSession;
+    d.hostMachine = !req.testClient && (d.localPrivilege || ctx.hostSession);
 
     // Admin writes need the admin key on top of the address check. Reads do
     // not: the admin page has to load and fetch that key in the first place.
@@ -289,7 +290,8 @@ Decision evaluate(const Request& req, const Context& ctx)
     // peer, trusted Host, rate limit) — by the time adminSession is set, that
     // check has already passed.
     d.adminPrivilege =
-        !ctx.adminLocked && (d.hostMachine || ctx.adminSession) && (!mutating || ctx.adminKeyOk);
+        !req.testClient && !ctx.adminLocked && (d.hostMachine || ctx.adminSession) &&
+        (!mutating || ctx.adminKeyOk);
 
     return d;
 }

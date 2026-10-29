@@ -1,3 +1,4 @@
+import { t } from '../i18n/i18n.js';
 import { BackendClient } from '../api/BackendClient.js';
 import { defaultIceServers } from '../api/IceServers.js';
 
@@ -80,7 +81,7 @@ export class VoiceChat {
         };
         pc.ontrack = (event) => {
             audio.srcObject = new MediaStream([event.track]);
-            audio.play().catch(() => this.onStatus('Tap Voice to enable playback'));
+            audio.play().catch(() => this.onStatus(t('touch.enablePlayback')));
         };
         pc.onconnectionstatechange = () => this.onStatus(`Voice: ${pc.connectionState}`);
         pc.onnegotiationneeded = async () => {
@@ -122,7 +123,7 @@ export class VoiceChat {
         }
     }
     async setMic(enabled) {
-        if (this.closed) throw new Error('Voice is disconnected; retry voice');
+        if (this.closed) throw new Error(t('touch.voiceDisconnected'));
         const generation = ++this.generation;
         if (!enabled) {
             this.stream?.getTracks().forEach((track) => track.stop());

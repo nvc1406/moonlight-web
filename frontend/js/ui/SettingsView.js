@@ -27,21 +27,12 @@
  *   - Advanced section: video enhancement, codec, mute host, tearing,
  *     performance stats, gaming mode
  */
-import { ProfileEditor } from '../touch/ProfileEditor.js';
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { t, getLanguage, setLanguage, AVAILABLE_LANGUAGES } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
 import { shortcutsGridHtml, shortcutsTitle } from '../util/shortcutsHelp.js';
 import { noticeDetailsHtml } from './PrivacyNotice.js';
-import { BMC_FULL_LOGO } from './bmcLogo.js';
-import {
-    SUPPORT_URL,
-    SUPPORT_BUTTON_AT,
-    goodSessionCount,
-    isSupportHidden,
-    setSupportHidden,
-} from '../util/supportNudge.js';
 import {
     GamepadRemapDialog,
     connectedPads,
@@ -250,8 +241,8 @@ export class SettingsView {
         // Whether a 4:4:4 stream (HEVC RExt / H.264 High 4:4:4) decodes here.
         this._chroma444Capability = await chroma444ClientCapability();
         this._canLogout = await this._checkSession();
-        await this._loadStatsConsent();
-        await this._loadUpdateState();
+        if (BackendClient.isAdmin) await this._loadStatsConsent();
+        if (BackendClient.isAdmin) await this._loadUpdateState();
         this.render();
         this.bindEvents();
         this._unsubUpdate = hostUpdate.subscribe((view) => {
@@ -278,7 +269,7 @@ export class SettingsView {
             this._updateRetryTimer = setTimeout(async () => {
                 this._updateRetryTimer = null;
                 if (this._destroyed) return;
-                await this._loadUpdateState();
+                if (BackendClient.isAdmin) await this._loadUpdateState();
                 if (!this._destroyed) this._paintUpdateSection();
             }, 10000);
         }
@@ -291,7 +282,7 @@ export class SettingsView {
      * Absent in a booth, whose visitors can do nothing about an update.
      */
     _renderUpdateSection() {
-        if (BackendClient.adminLocked) return '';
+        if (BackendClient.adminLocked || !BackendClient.isAdmin) return '';
         return `
                 <div class="settings-section settings-section-update" id="settings-section-update">
                     <h3 class="settings-section-title">${escapeHtml(t('update.sectionTitle'))}</h3>
@@ -425,39 +416,6 @@ export class SettingsView {
         } finally {
             checkbox.disabled = false;
         }
-    }
-
-    /**
-     * "Buy me a coffee": what a coffee pays for, the link, and the one switch
-     * that hides the button everywhere — the header's and the stream bar's
-     * (util/supportNudge.js). The switch is unticked by default and lives in
-     * this browser only, like the count behind the button. It shows from the
-     * session the button is earned on, ticked or not: before that there is
-     * nothing to hide. "Reset to defaults" leaves it alone: it is not a
-     * streaming setting.
-     */
-    _renderSupportSection() {
-        const hideToggle =
-            goodSessionCount() >= SUPPORT_BUTTON_AT
-                ? `
-                    <div class="settings-field">
-                        <label class="settings-checkbox-label">
-                            <input type="checkbox" id="settings-support-hidden"
-                                   ${isSupportHidden() ? 'checked' : ''} />
-                            <span class="settings-checkbox-text">${escapeHtml(t('support.hideToggle'))}</span>
-                        </label>
-                    </div>`
-                : '';
-        return `
-                <div class="settings-section" id="settings-section-support">
-                    <h3 class="settings-section-title">${escapeHtml(t('support.title'))}</h3>
-                    <p class="setting-desc">${escapeHtml(t('support.desc'))}</p>
-                    <div class="settings-field">
-                        <a class="btn btn-neutral settings-support-link" href="${SUPPORT_URL}"
-                           target="_blank" rel="noopener noreferrer"
-                           aria-label="${escapeHtml(t('support.action'))}">${BMC_FULL_LOGO}</a>
-                    </div>${hideToggle}
-                </div>`;
     }
 
     /**
@@ -830,7 +788,11 @@ export class SettingsView {
         // Persist to server when on localhost, so settings.json is updated
         // and all other clients get these defaults on first visit.
         const host = window.location.hostname;
-        if ((host === 'localhost' || host === '127.0.0.1') && !BackendClient.adminLocked) {
+        if (
+            (host === 'localhost' || host === '127.0.0.1') &&
+            !BackendClient.adminLocked &&
+            BackendClient.isAdmin
+        ) {
             // PyroWave is a device's own choice (the one on Ethernet), never
             // the codec every other browser starts with: the server's default
             // keeps what it had.
@@ -1767,7 +1729,6 @@ export class SettingsView {
                             title="${this.esc(t('common.close'))}">&times;</button>
                 </div>
 
-                <div class="settings-section"><button class="btn" id="touch-profile-editor">Game → Mode → Profile</button></div>
                 <!-- ── Video ─────────────────────────────────────────────── -->
                 <div class="settings-section">
                     <h3 class="settings-section-title">${t('settings.video')}</h3>
@@ -1953,13 +1914,13 @@ export class SettingsView {
                     <!-- Hidden: too technical for the average user. Kept in the DOM
                          (display:none) as a debug override; defaults to 'auto'. -->
                     <div class="settings-field u-hidden">
-                        <label class="settings-label" for="settings-video-worker">Decode on worker thread</label>
+                        <label class="settings-label" for="settings-video-worker">${t('settings.videoWorker')}</label>
                         <select id="settings-video-worker" class="settings-select">
-                            <option value="auto" ${this._videoWorker === 'auto' ? 'selected' : ''}>Auto (off)</option>
-                            <option value="on" ${this._videoWorker === 'on' ? 'selected' : ''}>On</option>
-                            <option value="off" ${this._videoWorker === 'off' ? 'selected' : ''}>Off</option>
+                            <option value="auto" ${this._videoWorker === 'auto' ? 'selected' : ''}>${t('settings.videoWorkerAuto')}</option>
+                            <option value="on" ${this._videoWorker === 'on' ? 'selected' : ''}>${t('touch.on')}</option>
+                            <option value="off" ${this._videoWorker === 'off' ? 'selected' : ''}>${t('touch.off')}</option>
                         </select>
-                        <span class="setting-desc">Decodes &amp; renders video off the UI thread (OffscreenCanvas). <strong>Auto</strong> keeps it off: measured slower on macOS (22 ms) and no faster elsewhere. Falls back automatically if unsupported. DataChannel/WSS transports only.</span>
+                        <span class="setting-desc">${t('settings.videoWorkerDesc')}</span>
                     </div>
 
                     <!-- Finger input, mobile/tablet only. A touchscreen laptop is
@@ -2061,13 +2022,11 @@ export class SettingsView {
                      through this machine, and Admin is a door most users never
                      open. The switch is still the owner's alone — shown to all,
                      operable from the machine itself. -->
-                ${this._renderPrivacySection()}
+                ${BackendClient.isAdmin ? this._renderPrivacySection() : ''}
 
                 <!-- ── Update ──────────────────────────────────────────────── -->
                 ${this._renderUpdateSection()}
 
-                <!-- ── Buy me a coffee ─────────────────────────────────────── -->
-                ${this._renderSupportSection()}
 
                 <!-- ── Reset ───────────────────────────────────────────────── -->
                 <div class="settings-section">
@@ -2159,11 +2118,6 @@ export class SettingsView {
     }
 
     bindEvents() {
-        this.container
-            .querySelector('#touch-profile-editor')
-            ?.addEventListener('click', () =>
-                ProfileEditor.open().catch((error) => Toast.error(error.message)),
-            );
         // Update: the section's body is repainted as the run goes, so the
         // button is reached through its section rather than bound itself.
         const updateSection = this.container.querySelector('#settings-section-update');
@@ -2187,14 +2141,6 @@ export class SettingsView {
         if (statsChk) {
             statsChk.addEventListener('change', () => this._setStatsConsent(statsChk));
         }
-
-        // Buy me a coffee: the link opens its own tab by itself (a plain link);
-        // the switch hides the button everywhere, or brings it back.
-        const supportChk = /** @type {HTMLInputElement|null} */ (
-            this.container.querySelector('#settings-support-hidden')
-        );
-        if (supportChk)
-            supportChk.addEventListener('change', () => setSupportHidden(supportChk.checked));
 
         // A codec picked is the preference at once (the menu shows only the
         // effective one, see _getEffectiveCodec); re-rendered for the note

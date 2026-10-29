@@ -663,10 +663,12 @@ export class BackendClient {
     /** @param {boolean} remember Keep the session across browser restarts (the
      *  default). False asks the server for a session-scoped cookie and a short
      *  server-side lifetime — for a machine the visitor does not own. */
-    static async validatePin(pin, machineName, remember = true) {
+    static async validatePin(pin, machineName, remember = true, role = 'client', accountName = '') {
         const identity = await loadOrCreateIdentity();
         const resp = await this.post('/api/auth/validate', {
             pin,
+            role,
+            account_name: accountName,
             machine_name: machineName,
             remember: remember !== false,
             // MW-BIND-v1: pairing with a PIN is the moment this browser's key is
@@ -739,6 +741,7 @@ export class BackendClient {
         if (status.authenticated || status.is_localhost) this._hadSession = true;
         // Booth mode (--noadmin): the views read it here rather than each asking.
         this.adminLocked = status.admin_locked === true;
+        this.isAdmin = status.role === 'admin';
         // share_in_booth_mode (issue #40): the booth still offers Share.
         this.boothShare = this.adminLocked && status.booth_share === true;
         return status;

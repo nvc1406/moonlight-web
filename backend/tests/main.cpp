@@ -22,6 +22,7 @@ void run_launcher_detect_tests();
 void run_host_app_image_tests();
 void run_log_archive_tests();
 void run_auth_manager_tests();
+void run_share_manager_tests();
 void run_connection_guard_tests();
 void run_static_files_tests();
 void run_home_screen_shell_tests();
@@ -97,6 +98,7 @@ int main(int argc, char** argv)
     run_host_app_image_tests();
     run_log_archive_tests();
     run_auth_manager_tests();
+    run_share_manager_tests();
     run_connection_guard_tests();
     run_static_files_tests();
     run_home_screen_shell_tests();

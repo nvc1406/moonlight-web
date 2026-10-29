@@ -166,3 +166,9 @@
     /* glass highlight kept for back-compat (used by card/stream rules) */
     --glass-highlight: inset 0 1px 0 rgba(0, 229, 255, 0.08);
 }
+
+/* Bundled display fonts lack Vietnamese glyphs; use one consistent system face. */
+:root:lang(vi) {
+    --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+}

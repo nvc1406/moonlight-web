@@ -218,6 +218,9 @@ QList<ShareManager::SlotStatus> ShareManager::status()
             st.state = s->activation.devices.isEmpty() ? State::Shared : State::Binded;
             st.permissions = s->activation.permissions;
             st.streaming = s->activation.streaming;
+            st.remoteMode = s->activation.remoteMode;
+            st.remoteStartedAt = s->activation.remoteStartedAt;
+            st.remoteEndedAt = s->activation.remoteEndedAt;
             st.ttlSecs = s->activation.ttlSecs;
             st.expiresAt = s->activation.expiresAt();
             st.devices = s->activation.devices;
@@ -559,13 +562,21 @@ int ShareManager::slotForToken(const QString& token)
 
 // ── Stream lifecycle ────────────────────────────────────────────────────────
 
-void ShareManager::setStreaming(int slot, bool streaming)
+void ShareManager::setStreaming(int slot, bool streaming, const QString& mode)
 {
     Slot* s = slotFor(slot);
     if (!s || !s->activation.live()) return;
-    if (s->activation.streaming == streaming) return;
+    if (s->activation.streaming == streaming && (!streaming || s->activation.remoteMode == mode)) return;
 
     s->activation.streaming = streaming;
+    if (streaming) {
+        s->activation.remoteMode = mode == "gamepad" ? QStringLiteral("gamepad") : QStringLiteral("stream");
+        s->activation.remoteStartedAt = QDateTime::currentSecsSinceEpoch();
+        s->activation.remoteEndedAt = 0;
+    } else {
+        s->activation.remoteEndedAt = QDateTime::currentSecsSinceEpoch();
+    }
+    save();
     // A stream that drops — tab closed, ICE dead, host hiccup — leaves the
     // activation alive on purpose: only an owner action or the TTL ends a share.
     // Nothing freezes here any more: the policy follows the owner's board for
@@ -739,6 +750,9 @@ void ShareManager::save()
             act[QStringLiteral("expiresAt")] = s.activation.expiresAtSecs;
             act[QStringLiteral("activatedAt")] = s.activation.activatedAt;
             act[QStringLiteral("pinFailures")] = s.activation.pinFailures;
+            act[QStringLiteral("remoteMode")] = s.activation.remoteMode;
+            act[QStringLiteral("remoteStartedAt")] = s.activation.remoteStartedAt;
+            act[QStringLiteral("remoteEndedAt")] = s.activation.remoteEndedAt;
             act[QStringLiteral("hostUuid")] = s.activation.hostUuid;
             act[QStringLiteral("appId")] = s.activation.appId;
             act[QStringLiteral("lastRefusedAt")] = s.activation.lastRefusedAt;
@@ -844,6 +858,9 @@ void ShareManager::load()
         a.expiresAtSecs = expiresAt;
         a.activatedAt = activatedAt;
         a.pinFailures = act.value(QStringLiteral("pinFailures")).toInt(0);
+        a.remoteMode = act[QStringLiteral("remoteMode")].toString();
+        a.remoteStartedAt = static_cast<qint64>(act[QStringLiteral("remoteStartedAt")].toDouble());
+        a.remoteEndedAt = static_cast<qint64>(act[QStringLiteral("remoteEndedAt")].toDouble());
         a.streaming = false; // the worker died with the process
         a.hostUuid = act.value(QStringLiteral("hostUuid")).toString();
         a.appId = act.value(QStringLiteral("appId")).toInt(-1);

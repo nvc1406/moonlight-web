@@ -26,6 +26,9 @@ import { HostListView } from '../js/ui/HostListView.js';
 import { Host } from '../js/models/Host.js';
 import { BackendClient } from '../js/api/BackendClient.js';
 
+// These fixtures exercise the admin library; clients fetch a permission-filtered list.
+BackendClient.isAdmin = true;
+
 const MAC = {
     uuid: 'moonlightweb-native-host',
     name: 'Mac — MoonlightWeb Host',

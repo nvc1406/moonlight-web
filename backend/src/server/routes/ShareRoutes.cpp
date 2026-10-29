@@ -55,6 +55,9 @@ QJsonObject slotJson(const ShareManager::SlotStatus& st)
     obj[QStringLiteral("permissions")] = st.permissions.toJson();
     obj[QStringLiteral("access_level")] = st.permissions.accessLevel();
     obj[QStringLiteral("streaming")] = st.streaming;
+    obj[QStringLiteral("remote_mode")] = st.remoteMode;
+    obj[QStringLiteral("remote_started_at")] = st.remoteStartedAt;
+    obj[QStringLiteral("remote_ended_at")] = st.remoteEndedAt;
     obj[QStringLiteral("ttl_secs")] = st.ttlSecs;
     // null, not 0: an unlimited invitation has no deadline to count down to, and
     // a 0 would render as "expired in 1970".

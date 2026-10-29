@@ -47,6 +47,11 @@
     const RETRY_KEY = 'mw-boot-retry';
 
     const TEXT = {
+        vi: {
+            title: 'Trang chưa tải xong',
+            body: 'Một phần ứng dụng chưa tải được. Điều này có thể xảy ra khi mạng không ổn định.',
+            reload: 'Tải lại',
+        },
         en: {
             title: 'The page did not finish loading',
             body: 'Part of the app never arrived. This happens on an unsteady network.',
@@ -82,8 +87,13 @@
     }
 
     function text() {
-        const lang = (navigator.language || 'en').slice(0, 2).toLowerCase();
-        return TEXT[lang] || TEXT.en;
+        let lang = 'vi';
+        try {
+            lang = localStorage.getItem('mw-lang') || 'vi';
+        } catch {
+            // Use the default if browser storage is unavailable.
+        }
+        return TEXT[lang] || TEXT.vi;
     }
 
     function showMessage(detail) {

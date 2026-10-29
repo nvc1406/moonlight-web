@@ -3,6 +3,8 @@
  * GPLv3 — see repository LICENSE.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import englishCatalog from '../locales/en.json';
+import vietnameseCatalog from '../locales/vi.json';
 import {
     t,
     init,
@@ -14,13 +16,14 @@ import {
 
 const EN = { hello: 'Hello {{name}}', only: { en: 'English only' }, attr: 'Attr text' };
 const FR = { hello: 'Bonjour {{name}}' };
+const VI = { hello: 'Xin chào {{name}}' };
 
 // Resolve locale fetches by URL so init() can load both catalogs.
-function stubLocaleFetch(map = { en: EN, fr: FR }) {
+function stubLocaleFetch(map = { en: EN, fr: FR, vi: VI }) {
     vi.stubGlobal(
         'fetch',
         vi.fn(async (url) => {
-            const code = url.includes('/fr.json') ? 'fr' : 'en';
+            const code = url.match(/\/([a-z]+)\.json$/)?.[1];
             const body = map[code];
             if (!body) return { ok: false, status: 404, json: async () => ({}) };
             return { ok: true, status: 200, json: async () => body };
@@ -40,10 +43,47 @@ describe('i18n', () => {
     it('exposes the available languages', () => {
         expect(AVAILABLE_LANGUAGES.map((l) => l.code)).toContain('en');
         expect(AVAILABLE_LANGUAGES.map((l) => l.code)).toContain('fr');
+        expect(AVAILABLE_LANGUAGES.map((l) => l.code)).toContain('vi');
     });
 
     it('returns the raw key when nothing is loaded', () => {
         expect(t('missing.key')).toBe('missing.key');
+    });
+
+    it('defaults a new browser to Vietnamese and interpolates variables', async () => {
+        stubLocaleFetch();
+        expect(await init()).toBe('vi');
+        expect(document.documentElement.lang).toBe('vi');
+        expect(t('hello', { name: 'An' })).toBe('Xin chào An');
+        expect(t('only.en')).toBe('English only');
+    });
+
+    it('uses Vietnamese when the saved language is no longer supported', async () => {
+        localStorage.setItem('mw-lang', 'unsupported');
+        stubLocaleFetch();
+        expect(await init()).toBe('vi');
+    });
+
+    it('renders the shipped Vietnamese catalog with technical terms and variables intact', async () => {
+        stubLocaleFetch({ en: englishCatalog, vi: vietnameseCatalog });
+        await init();
+        expect(t('common.save')).toBe('Lưu');
+        expect(t('settings.hdr')).toBe('HDR');
+        expect(t('settings.bitrate')).toBe('Bitrate:');
+        expect(t('launch.launching', { name: 'My Game' })).toBe('Đang khởi chạy My Game...');
+        const flatten = (object, prefix = '') =>
+            Object.entries(object).flatMap(([key, value]) =>
+                typeof value === 'object'
+                    ? flatten(value, `${prefix}${key}.`)
+                    : [[`${prefix}${key}`, value]],
+            );
+        const translated = Object.fromEntries(flatten(vietnameseCatalog));
+        for (const [key, value] of flatten(englishCatalog)) {
+            expect(translated[key], key).toBeTruthy();
+            const placeholders = (text) =>
+                [...text.matchAll(/\{\{\s*(\w+)\s*\}\}/g)].map((match) => match[1]).sort();
+            expect(placeholders(translated[key]), key).toEqual(placeholders(value));
+        }
     });
 
     it('loads the stored language and interpolates variables', async () => {

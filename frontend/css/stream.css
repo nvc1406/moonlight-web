@@ -3,15 +3,10 @@
 /* While a stream is active, the overlay owns the screen. Hide the underlying
    app (header, content, footer) so pinch-zoom/pan or the iOS virtual keyboard
    pushing the viewport can never reveal the apps grid, settings or buttons
-   beneath the stream — the stream has absolute visual priority.
-
-   The floating Discord button is part of that shell: pinned to the viewport it
-   would otherwise survive the overlay and float over the game, one misclick
-   away from throwing the player out of their session into a browser tab. */
+   beneath the stream — the stream has absolute visual priority. */
 body.streaming-active .app-header,
 body.streaming-active #main-content,
-body.streaming-active .app-footer,
-body.streaming-active .discord-fab {
+body.streaming-active .app-footer {
     display: none !important;
 }
 
@@ -1189,40 +1184,6 @@ body.streaming-active::after {
 .btn-stream-pad:active {
     transform: scale(0.95);
 }
-/* The owner's "Buy me a coffee" button (StreamView._mountSupportButton): the
-   official cup alone — white outline, yellow coffee — with no button around
-   it, first of the bar's right-hand controls; the wordmark or a frame would
-   draw the eye over a game. A phone held upright has no room for it; turned
-   sideways it goes first even ahead of the keyboard button, which otherwise
-   heads the bar on a touch screen. */
-.stream-support-btn {
-    display: inline-flex;
-    align-items: center;
-    margin-right: 12px;
-    padding: 2px;
-    border: 0;
-    background: none;
-    color: #fff;
-    font-size: 20px;
-    cursor: pointer;
-    opacity: 0.85;
-    transition: opacity 0.15s ease;
-}
-.stream-support-btn:hover,
-.stream-support-btn:focus-visible {
-    opacity: 1;
-}
-/* With the mark hidden, put it ahead of the keyboard button too. */
-@media (max-width: 767px) {
-    .stream-header .stream-support-btn {
-        order: -1;
-    }
-}
-@media (max-width: 767px) and (orientation: portrait) {
-    .stream-header .stream-support-btn {
-        display: none;
-    }
-}
 /* A pad is connected that nothing maps: the button is where to fix it. */
 .btn-stream-pad.is-attention {
     color: var(--kbd-on-edge);
@@ -1296,8 +1257,7 @@ body.streaming-active::after {
     z-index: 300;
 }
 .stream-quit-btn,
-.stream-console-btn,
-.stream-support-btn {
+.stream-console-btn {
     position: relative;
     z-index: 300;
 }

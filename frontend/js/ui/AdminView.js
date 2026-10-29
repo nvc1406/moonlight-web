@@ -28,6 +28,9 @@
  *
  * All settings stored server-side. Unsaved changes are discarded on close.
  */
+import { ProfileEditor } from '../touch/ProfileEditor.js';
+import { HostProgramPicker } from './HostProgramPicker.js';
+import { mountClientAccess } from './ClientAccessPanel.js';
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { t } from '../i18n/i18n.js';
@@ -163,6 +166,7 @@ export class AdminView {
         // machine streams at all — the section is hidden where it does not.
         /** @type {{id: string, app_id: number, name: string, command: string, source?: string, image?: string}[]} */
         this._hostApps = [];
+        this._touchProfiles = { games: [] };
         this._hostAppsSupported = false;
         this._hostAppsMax = 16;
         this._hostAppsScreen = 'primary';
@@ -184,6 +188,7 @@ export class AdminView {
         // Sessions polling
         this._sessionsPollTimer = null;
         // Pagination for sessions table
+        this._sessionFilter = 'all';
         this._sessionPage = 0;
         this._sessionsPerPage = 5;
         // Column sort for the sessions table. Empty key = backend order, which
@@ -289,6 +294,13 @@ export class AdminView {
     async _loadHostApps() {
         try {
             this._applyHostAppsState(await BackendClient.getHostApps());
+            if (typeof BackendClient.get === 'function') {
+                try {
+                    this._touchProfiles = await BackendClient.get('/api/touch/profiles');
+                } catch (error) {
+                    console.warn('[Admin] Profiles unavailable:', error);
+                }
+            }
         } catch (err) {
             // An older server has no such route: the section stays hidden.
             console.warn('[Admin] Failed to load the apps on this PC:', err);
@@ -495,6 +507,23 @@ export class AdminView {
             // host machine, takes the admin access being used to click with it.
             // The backend refuses that revocation anyway — don't offer it.
             const sessions = (result.sessions || []).filter((s) => !s.current);
+            if (typeof BackendClient.getShareStatus === 'function') {
+                try {
+                    const guests = await BackendClient.getShareStatus();
+                    for (const guest of guests.slots || []) {
+                        if (!guest.streaming && !guest.remote_started_at) continue;
+                        sessions.push({
+                            ...guest,
+                            guest: true,
+                            token: `guest-${guest.slot}`,
+                            machine_name: guest.name || `${t('admin.remoteGuest')} ${guest.slot}`,
+                            created_at: guest.devices?.[0]?.bound_at || 0,
+                        });
+                    }
+                } catch (error) {
+                    console.warn('[Admin] Guest status unavailable:', error);
+                }
+            }
             // Streaming sessions float to the top so they're immediately visible.
             // Array.sort is stable, so the backend's newest-first order survives.
             sessions.sort((a, b) => (b.streaming ? 1 : 0) - (a.streaming ? 1 : 0));
@@ -527,6 +556,9 @@ export class AdminView {
                 s.country,
                 s.created_at,
                 !!s.streaming,
+                s.remote_mode,
+                s.remote_started_at,
+                s.remote_ended_at,
             ]),
         );
     }
@@ -769,12 +801,13 @@ export class AdminView {
                             title="${this.esc(t('admin.closeDiscard'))}">&times;</button>
                 </div>
 
+                ${this._isLocalhost() ? '<div id="client-access-panel" class="settings-section"></div>' : ''}
                 <!-- PIN (localhost only) -->
                 ${
                     this._isLocalhost()
                         ? `
                     <div class="settings-section">
-                        <h3 class="settings-section-title">${t('admin.accessPin')}</h3>
+                        <h3 class="settings-section-title">${t('access.clientPin')}</h3>
                         <div class="settings-field u-pt-0">
                             <p class="setting-desc">
                                 ${t('admin.accessPinDesc')}
@@ -1198,23 +1231,29 @@ export class AdminView {
                 const ip = this.esc(cells.ip);
                 const streamingBadge = s.streaming
                     ? `<span class="session-streaming-badge" title="${this.esc(t('admin.streamingTitle'))}">${t('admin.streaming')}</span>`
-                    : '';
+                    : `<span class="host-app-badge">${t(s.remote_started_at ? 'admin.remotePrevious' : 'admin.remoteNever')}</span>`;
                 return `
             <tr data-token="${this.esc(s.token)}" class="${s.streaming ? 'session-row-streaming' : ''}">
-                <td><span class="session-name-edit" contenteditable="plaintext-only"
+                <td><span class="${s.guest ? 'session-guest-name' : 'session-name-edit'}" contenteditable="${s.guest ? 'false' : 'plaintext-only'}"
                           spellcheck="false"
                           data-token="${this.esc(s.token)}"
                           title="${this.esc(t('admin.editNameTitle'))}">${this.esc(cells.machine)}</span>${streamingBadge}</td>
                 <td>${this._formatDate(s.created_at)}</td>
                 <td>${ip}</td>
                 <td>${location}</td>
+                <td>${this.esc(s.remote_mode ? t(s.remote_mode === 'gamepad' ? 'admin.remoteGamepad' : 'admin.remoteStream') : '—')}</td>
+                <td>${s.remote_started_at ? this._formatDate(s.remote_started_at) : '—'}${s.remote_ended_at ? `<br><small>${t('admin.remoteEnded')}: ${this._formatDate(s.remote_ended_at)}</small>` : ''}</td>
                 <td>
-                    <button class="btn btn-danger btn-small btn-session-revoke"
+                    ${
+                        s.guest
+                            ? this.esc(t('admin.remoteGuest'))
+                            : `<button class="btn btn-danger btn-small btn-session-revoke"
                             data-token="${this.esc(s.token)}"
                             data-machine="${this.esc(cells.machine)}"
                             title="${this.esc(t('admin.revokeTitle'))}">
                         ${t('admin.revoke')}
-                    </button>
+                    </button>`
+                    }
                 </td>
             </tr>`;
             })
@@ -1243,6 +1282,8 @@ export class AdminView {
                 <thead>
                     <tr>
                         ${headers}
+                        <th>${t('admin.remoteMode')}</th>
+                        <th>${t('admin.remoteLast')}</th>
                         <th>${t('admin.colAction')}</th>
                     </tr>
                 </thead>
@@ -1257,10 +1298,17 @@ export class AdminView {
     // header is clicked. Returns a copy — _sessions stays in backend order so a
     // poll refresh doesn't fight with the chosen sort.
     _getSortedSessions() {
-        if (!this._sessionSortKey) return this._sessions;
+        const sessions = this._sessions.filter((s) =>
+            this._sessionFilter === 'active'
+                ? s.streaming
+                : this._sessionFilter === 'history'
+                  ? !s.streaming && s.remote_started_at
+                  : true,
+        );
+        if (!this._sessionSortKey) return sessions;
         const key = this._sessionSortKey;
         const sign = this._sessionSortDir === 'asc' ? 1 : -1;
-        return this._sessions.slice().sort((a, b) => {
+        return sessions.slice().sort((a, b) => {
             const va = this._sessionDisplay(a)[key];
             const vb = this._sessionDisplay(b)[key];
             return sign * this._compareSessionValues(key, va, vb);
@@ -1309,6 +1357,13 @@ export class AdminView {
     }
 
     _bindSessionSortHeaders(root) {
+        root.querySelectorAll('[data-session-filter]').forEach((button) => {
+            button.addEventListener('click', () => {
+                this._sessionFilter = button.dataset.sessionFilter;
+                this._sessionPage = 0;
+                this._renderSessionsTable();
+            });
+        });
         root.querySelectorAll('.sessions-th-sortable').forEach((th) => {
             th.addEventListener('click', () => this._sortSessionsBy(th.dataset.sort));
             th.addEventListener('keydown', (e) => {
@@ -1326,7 +1381,10 @@ export class AdminView {
     }
 
     _buildPaginationHtml() {
-        const totalPages = Math.max(1, Math.ceil(this._sessions.length / this._sessionsPerPage));
+        const totalPages = Math.max(
+            1,
+            Math.ceil(this._getSortedSessions().length / this._sessionsPerPage),
+        );
         const currentPage = this._sessionPage + 1;
         return `
             <div class="sessions-pagination">
@@ -1351,7 +1409,20 @@ export class AdminView {
             return `<p class="settings-hint">${t('admin.noActiveSessions')}</p>`;
         }
         const pageSessions = this._getPaginatedSessions();
-        return this._buildSessionsTableHtml(pageSessions) + this._buildPaginationHtml();
+        return (
+            `<div class="sessions-filter">${[
+                ['all', 'remoteAll'],
+                ['active', 'remoteActive'],
+                ['history', 'remoteHistory'],
+            ]
+                .map(
+                    ([value, key]) =>
+                        `<button class="btn btn-secondary btn-small" data-session-filter="${value}" aria-pressed="${this._sessionFilter === value}">${t(`admin.${key}`)}</button>`,
+                )
+                .join('')}</div>` +
+            this._buildSessionsTableHtml(pageSessions) +
+            this._buildPaginationHtml()
+        );
     }
 
     _renderSessionsTable() {
@@ -1359,7 +1430,10 @@ export class AdminView {
         if (!container) return;
 
         // Clamp page if needed after data refresh
-        const totalPages = Math.max(1, Math.ceil(this._sessions.length / this._sessionsPerPage));
+        const totalPages = Math.max(
+            1,
+            Math.ceil(this._getSortedSessions().length / this._sessionsPerPage),
+        );
         if (this._sessionPage >= totalPages) {
             this._sessionPage = totalPages - 1;
         }
@@ -1402,7 +1476,8 @@ export class AdminView {
         }
         if (nextBtn) {
             nextBtn.addEventListener('click', () => {
-                const maxPage = Math.ceil(this._sessions.length / this._sessionsPerPage) - 1;
+                const maxPage =
+                    Math.ceil(this._getSortedSessions().length / this._sessionsPerPage) - 1;
                 if (this._sessionPage < maxPage) {
                     this._sessionPage++;
                     this._renderSessionsTable();
@@ -1419,6 +1494,8 @@ export class AdminView {
     }
 
     bindEvents() {
+        const accessPanel = this.container.querySelector('#client-access-panel');
+        if (accessPanel) mountClientAccess(accessPanel);
         // "Your controller has no driver" — the other half of the notice the
         // hosts page shows. Here too because this is the page someone opens
         // when something on the host is not working, and it is where they will
@@ -1935,7 +2012,8 @@ export class AdminView {
         }
         if (nextBtn) {
             nextBtn.addEventListener('click', () => {
-                const maxPage = Math.ceil(this._sessions.length / this._sessionsPerPage) - 1;
+                const maxPage =
+                    Math.ceil(this._getSortedSessions().length / this._sessionsPerPage) - 1;
                 if (this._sessionPage < maxPage) {
                     this._sessionPage++;
                     this._renderSessionsTable();
@@ -2532,7 +2610,9 @@ export class AdminView {
                                     <span class="host-app-name">${this.esc(app.name)}</span>${auto}
                                 </div>
                                 <code class="host-app-command">${this.esc(app.command)}</code>
+                                <div class="host-app-profile-cards">${this._renderHostAppProfiles(app, i)}</div>
                                 <div class="host-app-actions">
+                                    <button class="btn btn-secondary btn-small" data-host-app-profile="${i}">${t('admin.hostAppProfile')}</button>
                                     <button class="btn btn-secondary btn-small" data-host-app-image="${i}">
                                         ${t('admin.hostAppChangeImage')}
                                     </button>
@@ -2573,7 +2653,13 @@ export class AdminView {
                             ? `<ul class="host-app-list">${rows}</ul>`
                             : `<p class="settings-hint host-apps-empty">${t('admin.hostAppsEmpty')}</p>`
                     }
-                    <div class="host-app-add">
+                    <div class="host-app-toolbar">
+                        <button class="btn btn-save" id="host-app-browse" ${full ? 'disabled' : ''}>${t('admin.hostAppBrowse')}</button>
+                        <button class="btn btn-secondary" id="host-app-profiles">${t('admin.hostAppProfiles')}</button>
+                    </div>
+                    <p class="settings-hint">${t('admin.hostAppBrowseHint')}</p>
+                    <div id="host-app-selected" class="host-app-selected"></div>
+                    <details id="host-app-details"><summary>${t('admin.hostAppManual')}</summary><div class="host-app-add">
                         <input type="text" id="host-app-name" class="settings-input host-app-name-input"
                                maxlength="40" placeholder="${this.esc(t('admin.hostAppName'))}"
                                aria-label="${this.esc(t('admin.hostAppName'))}" ${full ? 'disabled' : ''} />
@@ -2589,12 +2675,47 @@ export class AdminView {
                             ${t('admin.hostAppAdd')}
                         </button>
                     </div>
-                    <p class="settings-hint host-apps-hint">${t('admin.hostAppsHint')}</p>
+                    <p class="settings-hint host-apps-hint">${t('admin.hostAppsHint')}</p></details>
                     ${restorable}
                     ${full ? `<p class="settings-hint">${t('admin.hostAppsFull', { max: this._hostAppsMax })}</p>` : ''}
                     <input type="file" id="host-app-image-file" class="u-hidden"
                            accept="image/png,image/jpeg,image/webp" tabindex="-1" aria-hidden="true" />
                 </div>`;
+    }
+
+    _renderHostAppProfiles(app, index) {
+        const game = this._touchProfiles.games?.find(
+            (g) => g.host === 'moonlightweb-native-host' && g.appId === app.app_id,
+        );
+        return ['stream', 'gamepad']
+            .map((mode) => {
+                const profiles = game?.modes?.[mode]?.profiles || [];
+                const label = t(mode === 'gamepad' ? 'admin.remoteGamepad' : 'admin.remoteStream');
+                const cards = profiles.length ? profiles : [{ id: '', name: 'Xbox built-in' }];
+                return cards
+                    .map(
+                        (profile) =>
+                            `<button class="btn btn-secondary host-app-profile-card" data-host-app-profile="${index}" data-profile-mode="${mode}" data-profile-id="${this.esc(profile.id)}"><small>${label}</small><strong>${this.esc(profile.name)}</strong></button>`,
+                    )
+                    .join('');
+            })
+            .join('');
+    }
+
+    async _openHostAppProfiles(target = null) {
+        try {
+            const editor = await ProfileEditor.open(target);
+            editor.onSaved = (doc) => {
+                this._touchProfiles = doc;
+                const section = this.container.querySelector('#admin-section-host-apps');
+                if (section) {
+                    section.outerHTML = this._renderHostApps();
+                    this._bindHostApps();
+                }
+            };
+        } catch (error) {
+            Toast.error(error.message);
+        }
     }
 
     /**
@@ -2618,6 +2739,41 @@ export class AdminView {
         const add = /** @type {HTMLButtonElement|null} */ (
             section.querySelector('#btn-host-app-add')
         );
+        this._selectedProgram = null;
+        section.querySelector('#host-app-browse')?.addEventListener('click', () => {
+            HostProgramPicker.open((program) => {
+                this._selectedProgram = program;
+                const details = /** @type {HTMLDetailsElement} */ (
+                    section.querySelector('#host-app-details')
+                );
+                if (details) details.open = true;
+                if (name) name.value = program.name;
+                if (command) command.value = program.command;
+                const preview = section.querySelector('#host-app-selected');
+                if (preview)
+                    preview.innerHTML = `${program.png ? `<img alt="" src="data:image/png;base64,${this.esc(program.png)}">` : ''}<span>${this.esc(program.name)}</span>`;
+                ready();
+            });
+        });
+        section.querySelector('#host-app-profiles')?.addEventListener('click', () => {
+            void this._openHostAppProfiles();
+        });
+        section.querySelectorAll('[data-host-app-profile]').forEach((button) => {
+            button.addEventListener('click', () => {
+                const app =
+                    this._hostApps[
+                        Number(/** @type {HTMLElement} */ (button).dataset.hostAppProfile)
+                    ];
+                const data = /** @type {HTMLElement} */ (button).dataset;
+                void this._openHostAppProfiles({
+                    host: 'moonlightweb-native-host',
+                    appId: app.app_id,
+                    name: app.name,
+                    mode: data.profileMode,
+                    profileId: data.profileId,
+                });
+            });
+        });
         const ready = () => {
             if (add && name && command) {
                 add.disabled = !name.value.trim() || !command.value.trim() || name.disabled;
@@ -2625,7 +2781,11 @@ export class AdminView {
         };
         if (name) name.addEventListener('input', ready);
         if (command) {
-            command.addEventListener('input', ready);
+            command.addEventListener('input', () => {
+                this._selectedProgram = null;
+                section.querySelector('#host-app-selected')?.replaceChildren();
+                ready();
+            });
             command.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && add && !add.disabled) add.click();
             });
@@ -2638,7 +2798,8 @@ export class AdminView {
         if (add && name && command) {
             add.addEventListener('click', () => {
                 const app = { name: name.value.trim(), command: command.value.trim() };
-                void this._addHostApp(app, file?.files?.[0] ?? null);
+                add.disabled = true;
+                void this._addHostApp(app, file?.files?.[0] ?? null, this._selectedProgram?.png);
             });
         }
         section.querySelectorAll('[data-host-app-remove]').forEach((btn) => {
@@ -2712,8 +2873,9 @@ export class AdminView {
      * new entry its id first.
      * @param {{name: string, command: string}} app
      * @param {File|null} image
+     * @param {string|null} autoPng
      */
-    async _addHostApp(app, image) {
+    async _addHostApp(app, image, autoPng = null) {
         const before = new Set(this._hostApps.map((a) => a.id));
         await this._saveHostApps(
             async () => {
@@ -2724,10 +2886,10 @@ export class AdminView {
                 const added = Array.isArray(state.apps)
                     ? state.apps.find((/** @type {{id: string}} */ a) => !before.has(a.id))
                     : null;
-                if (image && added) {
+                if ((image || autoPng) && added) {
                     state = await BackendClient.setHostAppImage(
                         added.id,
-                        await this._hostAppPng(image),
+                        image ? await this._hostAppPng(image) : autoPng,
                     );
                 }
                 return state;

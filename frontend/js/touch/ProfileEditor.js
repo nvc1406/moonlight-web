@@ -1,3 +1,4 @@
+import { t } from '../i18n/i18n.js';
 import { BackendClient } from '../api/BackendClient.js';
 import { escapeHtml as esc } from '../util/escapeHtml.js';
 import { builtin, clone, MODES, OUTPUTS, groupFor } from './profiles.js';
@@ -13,8 +14,13 @@ export function loadTouchStyles() {
 }
 
 export class ProfileEditor {
-    static async open() {
+    /** @type {{host: string, appId: number, mode?: string, profileId?: string, name?: string}|null} */
+    target = null;
+    /** @type {((doc: any) => void)|null} */
+    onSaved = null;
+    static async open(target = null) {
         const editor = new ProfileEditor();
+        editor.target = target;
         await editor.load();
         return editor;
     }
@@ -40,15 +46,29 @@ export class ProfileEditor {
         for (const game of this.doc.games)
             if (!this.apps.some((a) => a.host === game.host && a.appId === game.appId))
                 this.apps.push({ host: game.host, appId: game.appId, name: game.name });
-        this.gameIndex = 0;
-        this.mode = 'stream';
-        this.profileId = '';
+        if (
+            this.target &&
+            !this.apps.some((a) => a.host === this.target.host && a.appId === this.target.appId)
+        )
+            this.apps.push({
+                host: this.target.host,
+                appId: this.target.appId,
+                name: this.target.name || `App ${this.target.appId}`,
+            });
+        this.gameIndex = Math.max(
+            0,
+            this.apps.findIndex(
+                (a) => a.host === this.target?.host && a.appId === this.target?.appId,
+            ),
+        );
+        this.mode = this.target?.mode === 'gamepad' ? 'gamepad' : 'stream';
+        this.profileId = this.target?.profileId || '';
         this.orientation = 'landscape';
         this.test = false;
         this.root = document.createElement('section');
         this.root.className = 'touch-editor';
         this.root.setAttribute('role', 'dialog');
-        this.root.setAttribute('aria-label', 'Game → Mode → Profile');
+        this.root.setAttribute('aria-label', t('touch.editorTitle'));
         document.body.append(this.root);
         this.render();
     }
@@ -83,14 +103,14 @@ export class ProfileEditor {
             null;
         this.profileId = this.profile?.id || '';
         const p = this.profile;
-        this.root.innerHTML = `<header><strong>Game → Mode → Profile</strong><button data-action="close">Close</button><button data-action="save">Save to host</button><button data-action="reload">Reload saved</button></header>
-            <div><select data-field="game" aria-label="Game">${this.apps.map((a, i) => `<option value="${i}" ${i === this.gameIndex ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>
-            <select data-field="mode" aria-label="Mode">${MODES.map((m) => `<option ${m === this.mode ? 'selected' : ''} value="${m}">${m === 'stream' ? 'Video + audio + gamepad' : 'Gamepad only'}</option>`).join('')}</select>
-            <select data-field="profile" aria-label="Profile">${group.profiles.length ? '' : '<option value="">Xbox built-in</option>'}${group.profiles.map((pr) => `<option value="${esc(pr.id)}" ${pr.id === this.profileId ? 'selected' : ''}>${esc(pr.name)}${pr.id === group.defaultProfileId ? ' ★' : ''}</option>`).join('')}</select></div>
-            <div><button data-action="new" ${game ? '' : 'disabled'}>New</button><button data-action="copy" ${game ? '' : 'disabled'}>Duplicate</button><button data-action="cross" ${game ? '' : 'disabled'}>Copy to other mode</button><button data-action="default" ${p ? '' : 'disabled'}>Set default</button><button data-action="delete" ${p ? '' : 'disabled'}>Delete</button></div>
+        this.root.innerHTML = `<header><strong>${t('touch.editorTitle')}</strong><button data-action="close">${t('common.close')}</button><button data-action="save">${t('touch.saveHost')}</button><button data-action="reload">${t('touch.reload')}</button></header>
+            <div><select data-field="game" aria-label="${t('touch.sessionGame')}">${this.apps.map((a, i) => `<option value="${i}" ${i === this.gameIndex ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>
+            <select data-field="mode" aria-label="${t('touch.mode')}">${MODES.map((m) => `<option ${m === this.mode ? 'selected' : ''} value="${m}">${m === 'stream' ? t('touch.stream') : t('touch.gamepadOnly')}</option>`).join('')}</select>
+            <select data-field="profile" aria-label="${t('touch.profile')}">${group.profiles.length ? '' : `<option value="">${t('touch.builtinXbox')}</option>`}${group.profiles.map((pr) => `<option value="${esc(pr.id)}" ${pr.id === this.profileId ? 'selected' : ''}>${esc(pr.name)}${pr.id === group.defaultProfileId ? ' ★' : ''}</option>`).join('')}</select></div>
+            <div><button data-action="new" ${game ? '' : 'disabled'}>${t('touch.new')}</button><button data-action="copy" ${game ? '' : 'disabled'}>${t('touch.duplicate')}</button><button data-action="cross" ${game ? '' : 'disabled'}>${t('touch.copyMode')}</button><button data-action="default" ${p ? '' : 'disabled'}>${t('touch.setDefault')}</button><button data-action="delete" ${p ? '' : 'disabled'}>${t('touch.delete')}</button></div>
             ${
                 p
-                    ? `<div class="touch-editor-fields"><label>Name <input data-setting="name" maxlength="80" value="${esc(p.name)}"></label>
+                    ? `<div class="touch-editor-fields"><label>${t('touch.name')} <input data-setting="name" maxlength="80" value="${esc(p.name)}"></label>
             ${[
                 ['deadzone', 0, 0.9, 0.01],
                 ['sensitivity', 0.1, 3, 0.1],
@@ -98,14 +118,14 @@ export class ProfileEditor {
             ]
                 .map(
                     ([key, min, max, step]) =>
-                        `<label>${key} <input data-setting="${key}" type="number" min="${min}" max="${max}" step="${step}" value="${p[key]}"></label>`,
+                        `<label>${key === 'deadzone' ? key : t('touch.' + key)} <input data-setting="${key}" type="number" min="${min}" max="${max}" step="${step}" value="${p[key]}"></label>`,
                 )
                 .join('')}
-            <label><input data-setting="audio" type="checkbox" ${p.audio ? 'checked' : ''}>Game audio by default</label></div>`
+            <label><input data-setting="audio" type="checkbox" ${p.audio ? 'checked' : ''}>${t('touch.defaultAudio')}</label></div>`
                     : ''
             }
-            <button data-action="orientation">${this.orientation}</button><button data-action="test">${this.test ? 'Edit layout' : 'Test controls'}</button><button data-action="reset" ${p ? '' : 'disabled'}>Reset layout</button>
-            <div class="touch-editor-preview ${this.orientation === 'portrait' ? 'portrait' : ''}"></div><div class="touch-editor-fields" data-control></div><p role="status">Draft — save to apply to devices.</p>`;
+            <button data-action="orientation">${t('touch.' + this.orientation)}</button><button data-action="test">${this.test ? t('touch.editLayout') : t('touch.testControls')}</button><button data-action="reset" ${p ? '' : 'disabled'}>${t('touch.resetLayout')}</button>
+            <div class="touch-editor-preview ${this.orientation === 'portrait' ? 'portrait' : ''}"></div><div class="touch-editor-fields" data-control></div><p role="status">${t('touch.draft')}</p>`;
         this.root.querySelectorAll('[data-action]').forEach((b) =>
             b.addEventListener('click', () =>
                 this.action(/** @type {HTMLElement} */ (b).dataset.action).catch((e) => {
@@ -167,7 +187,7 @@ export class ProfileEditor {
     selectControl(control) {
         if (!this.profile || this.test) return;
         const root = this.root.querySelector('[data-control]');
-        root.innerHTML = `<strong>${esc(control.id)}</strong><label>Label <input data-prop="label" maxlength="32" value="${esc(control.label)}"></label><label>Output <select data-prop="output">${OUTPUTS.map((o) => `<option ${o === control.output ? 'selected' : ''}>${o}</option>`).join('')}</select></label><label>Size <input data-prop="size" type="number" min="0.025" max="0.5" step="0.01" value="${control.size}"></label><label><input data-prop="hidden" type="checkbox" ${control.hidden ? 'checked' : ''}>Hidden</label>`;
+        root.innerHTML = `<strong>${esc(control.id)}</strong><label>${t('touch.label')} <input data-prop="label" maxlength="32" value="${esc(control.label)}"></label><label>${t('touch.output')} <select data-prop="output">${OUTPUTS.map((o) => `<option ${o === control.output ? 'selected' : ''}>${o}</option>`).join('')}</select></label><label>${t('touch.size')} <input data-prop="size" type="number" min="0.025" max="0.5" step="0.01" value="${control.size}"></label><label><input data-prop="hidden" type="checkbox" ${control.hidden ? 'checked' : ''}>${t('touch.hidden')}</label>`;
         root.querySelectorAll('[data-prop]').forEach((input) => {
             const update = () => {
                 const el = /** @type {HTMLInputElement} */ (input);
@@ -197,7 +217,8 @@ export class ProfileEditor {
         if (action === 'save') {
             this.doc = await BackendClient.post('/api/touch/profiles', this.doc);
             this.render();
-            this.status('Saved');
+            this.status(t('settings.saved'));
+            this.onSaved?.(this.doc);
             return;
         }
         if (action === 'reload') {
@@ -211,7 +232,7 @@ export class ProfileEditor {
             const profile = {
                 ...clone(source),
                 id: crypto.randomUUID(),
-                name: `${source.name} copy`,
+                name: t('touch.copyName', { name: source.name }),
             };
             target.profiles.push(profile);
             if (!target.defaultProfileId) target.defaultProfileId = profile.id;
@@ -224,7 +245,7 @@ export class ProfileEditor {
             if (group.defaultProfileId === this.profile.id && remaining.length) {
                 this.render();
                 const field = this.root.querySelector('[data-control]');
-                field.innerHTML = `<label>Replacement default <select data-replacement>${remaining.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select></label><button data-delete-confirm>Delete and replace</button>`;
+                field.innerHTML = `<label>${t('touch.replacement')} <select data-replacement>${remaining.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select></label><button data-delete-confirm>${t('touch.deleteReplace')}</button>`;
                 field.querySelector('[data-delete-confirm]').addEventListener('click', () => {
                     this.commitPad();
                     group.defaultProfileId = /** @type {HTMLSelectElement} */ (

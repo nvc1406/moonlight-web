@@ -26,6 +26,7 @@
  * a toggle between PIN and certificate modes.
  */
 import { BackendClient } from '../api/BackendClient.js';
+import { isClientTestMode } from '../util/clientTestMode.js';
 import { Toast } from './Toast.js';
 import { t } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
@@ -54,6 +55,7 @@ export class LoginView {
         this._lockoutTimer = null;
         this._submitting = false;
         this._machineName = '';
+        this._accountName = '';
         this._certAuthAvailable = false; // Server has cert auth enabled
         this._certMode = false; // User chose cert upload mode
         this._selectedFileName = '';
@@ -68,6 +70,7 @@ export class LoginView {
         // then dies with the browser and the server expires the session in hours
         // rather than 90 days.
         this._remember = true;
+        this._role = 'client';
     }
 
     async start() {
@@ -144,6 +147,7 @@ export class LoginView {
      * than no link.
      */
     async _resolveLocalUrl() {
+        if (isClientTestMode()) return;
         const { hostname, port } = window.location;
         if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]') return;
         if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) && !hostname.startsWith('[')) return;
@@ -278,7 +282,20 @@ export class LoginView {
             <div class="login-form login-form--pin">
                 <p class="login-subtitle">${t('login.pinSubtitle')}</p>
 
+                <div class="login-field">
+                    <label class="login-label" for="login-role">${t('access.loginRole')}</label>
+                    <select id="login-role" class="login-input">
+                        <option value="client" ${this._role === 'client' ? 'selected' : ''}>${t('access.client')}</option>
+                        ${isClientTestMode() ? '' : `<option value="admin" ${this._role === 'admin' ? 'selected' : ''}>${t('access.admin')}</option>`}
+                    </select>
+                </div>
                 <!-- Machine name -->
+                <div class="login-field" id="login-account-field" ${this._role === 'admin' ? 'hidden' : ''}>
+                    <label class="login-label" for="login-account-input">${t('accounts.name')}</label>
+                    <input type="text" id="login-account-input" class="login-input"
+                           value="${this.esc(this._accountName || '')}" maxlength="64" autocomplete="username" />
+                    <p class="setting-desc">${t('accounts.loginHint')}</p>
+                </div>
                 <div class="login-field">
                     <label class="login-label" for="login-machine-input">${t('login.nameSession')}</label>
                     <input type="text" id="login-machine-input" class="login-input"
@@ -467,6 +484,14 @@ export class LoginView {
     }
 
     bindEvents() {
+        this.container.querySelector('#login-role')?.addEventListener('change', (event) => {
+            this._role = event.target.value;
+            const field = this.container.querySelector('#login-account-field');
+            if (field) field.hidden = this._role === 'admin';
+        });
+        this.container.querySelector('#login-account-input')?.addEventListener('input', (event) => {
+            this._accountName = event.target.value;
+        });
         const formArea = this.container.querySelector('#login-form-area');
         if (!formArea) return;
 
@@ -782,7 +807,13 @@ export class LoginView {
         const machineName = machineInput ? machineInput.value.trim() : '';
 
         try {
-            const result = await BackendClient.validatePin(pin, machineName, this._remember);
+            const result = await BackendClient.validatePin(
+                pin,
+                machineName,
+                this._remember,
+                this.container.querySelector('#login-role')?.value || 'client',
+                this._accountName || '',
+            );
 
             if (result.status === 'ok') {
                 LoginView._rememberMachineName(machineName);

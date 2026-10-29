@@ -1,3 +1,4 @@
+import { t } from '../i18n/i18n.js';
 import { BackendClient } from '../api/BackendClient.js';
 import { escapeHtml as esc } from '../util/escapeHtml.js';
 import { chooseProfile, groupFor, rememberedProfile, rememberProfile } from './profiles.js';
@@ -37,7 +38,9 @@ export class TouchControls {
         ]) {
             this.bar.addEventListener(type, (event) => event.stopPropagation());
         }
-        this.view._rootEl.append(this.bar);
+        // The canvas area starts below the header and remains the fullscreen surface.
+        // Anchoring here keeps Controls clear of Fullscreen/volume on every viewport.
+        (this.view.canvasArea || this.view._rootEl).append(this.bar);
         await this.refresh();
         if (this.closed) return;
         if (this.info.capabilities.voice) {
@@ -133,10 +136,10 @@ export class TouchControls {
         const allowed = !this.view._playerMode || this.view._gamepadAllowed;
         const group = groupFor(this.info.game, this.mode);
         this.bar.classList.toggle('is-open', !!this.menuOpen);
-        this.bar.innerHTML = `<button data-action="menu">${this.menuOpen ? 'Close controls' : 'Controls'}</button>${allowed ? `<button data-action="touch">${this.enabled ? 'Hide gamepad' : 'Touch gamepad'}</button><select data-profile aria-label="Touch profile">${(group.profiles.length ? group.profiles : [this.profile]).map((p) => `<option value="${esc(p.id)}" ${p.id === this.profile.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>` : ''}
-            <button data-action="audio">Game audio: ${this.audio ? 'On' : 'Off'}</button><button data-action="voice">Voice: ${this.listening ? 'On' : 'Off'}</button><button data-action="mic">Mic: ${this.mic ? 'On' : 'Off'}</button><button data-action="retry">Retry voice</button>
-            ${this.options.onModeChange && this.info.capabilities.gamepadMode && allowed ? `<button data-action="mode">${this.mode === 'stream' ? 'Gamepad only' : 'Video + gamepad'}</button>` : ''}
-            ${this.info.owner ? '<button data-action="editor">Profiles</button><button data-action="game">Select game</button>' : ''}<span class="touch-status">${esc(this.info.game.name)} · ${this.mode}</span>`;
+        this.bar.innerHTML = `<button data-action="menu">${this.menuOpen ? t('touch.closeControls') : t('touch.controls')}</button>${allowed ? `<button data-action="touch">${this.enabled ? t('touch.hideGamepad') : t('touch.touchGamepad')}</button><select data-profile aria-label="${t('touch.touchProfile')}">${(group.profiles.length ? group.profiles : [this.profile]).map((p) => `<option value="${esc(p.id)}" ${p.id === this.profile.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>` : ''}
+            <button data-action="audio">${t('touch.gameAudio')}: ${this.audio ? t('touch.on') : t('touch.off')}</button><button data-action="voice">Voice: ${this.listening ? t('touch.on') : t('touch.off')}</button><button data-action="mic">Mic: ${this.mic ? t('touch.on') : t('touch.off')}</button><button data-action="retry">${t('touch.retryVoice')}</button>
+            ${this.options.onModeChange && this.info.capabilities.gamepadMode && allowed ? `<button data-action="mode">${this.mode === 'stream' ? t('touch.gamepadOnly') : t('touch.videoGamepad')}</button>` : ''}
+            ${this.info.owner ? `<button data-action="editor">${t('touch.profiles')}</button><button data-action="game">${t('touch.selectGame')}</button>` : ''}<span class="touch-status">${esc(this.info.game.name)} · ${this.mode}</span>`;
         this.bar.querySelector('[data-profile]')?.addEventListener('change', (event) => {
             this.profile = chooseProfile(
                 this.info.game,
@@ -211,8 +214,8 @@ export class TouchControls {
             const doc = await BackendClient.get('/api/touch/profiles');
             const games = doc.games.filter((g) => g.host === this.info.game.host);
             const select = document.createElement('select');
-            select.setAttribute('aria-label', 'Session game');
-            select.innerHTML = `<option value="">Select game…</option>${games.map((g) => `<option value="${g.appId}">${esc(g.name)}</option>`).join('')}`;
+            select.setAttribute('aria-label', t('touch.sessionGame'));
+            select.innerHTML = `<option value="">${t('touch.selectGame')}…</option>${games.map((g) => `<option value="${g.appId}">${esc(g.name)}</option>`).join('')}`;
             this.bar.append(select);
             select.addEventListener('change', async () => {
                 if (select.value === '') return;

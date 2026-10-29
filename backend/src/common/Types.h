@@ -61,6 +61,7 @@ struct HttpRequest
                                 // presented and its offer was signed over. A session
                                 // bound to another key is refused on it
                                 // (HttpServer::tunnelKeyRefused). Empty off the tunnel.
+    bool testClient = false;    // URL-scoped client test: never inherit host/admin privileges.
     bool malformed = false;     // The request line/headers could not be trusted —
                                 // currently set when the percent-decoded path
                                 // carries control characters (CR/LF smuggled in

@@ -42,6 +42,25 @@ void registerTouchRoutes(HttpServer& server, TouchProfiles& profiles, ShareManag
         if (req.isLocal || server.isAuthenticated(req)) return deps.currentOwnerContext();
         return {};
     };
+    server.router()->get("/api/touch/capabilities", [&server, &deps](const HttpRequest& req) {
+        if (!req.isLocal && !server.isAuthenticated(req))
+            return HttpResponse::error(401, "Authentication required");
+        return HttpResponse::json(QJsonObject{{"gamepadMode", deps.guestController &&
+            deps.guestController(req.queryParams.value("host"))}});
+    });
+    // Paired library clients may read a game's layouts without receiving admin
+    // privileges or the full editable profile document. Invitation guests keep
+    // using /player/touch/session, scoped to their authorized seat.
+    server.router()->get("/api/touch/game", [&server, &profiles, &deps](const HttpRequest& req) {
+        if (!req.isLocal && !server.isAuthenticated(req))
+            return HttpResponse::error(401, "Authentication required");
+        const QString host = req.queryParams.value("host");
+        bool appOk = false;
+        const int app = req.queryParams.value("appId").toInt(&appOk);
+        if (!appOk || app < 0 || !deps.hostAppExists || !deps.hostAppExists(host, app))
+            return HttpResponse::error(404, "Game not found");
+        return HttpResponse::json(profiles.game(host, profiles.selectedApp(host, app)));
+    });
     server.router()->get("/api/touch/profiles", [&profiles](const HttpRequest& req) {
         if (!req.isLocal) return HttpResponse::error(403, "Owner only");
         return HttpResponse::json(profiles.document());

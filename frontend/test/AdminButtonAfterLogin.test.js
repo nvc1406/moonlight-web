@@ -1,11 +1,8 @@
 /*
  * MoonlightWeb — frontend TNR. Copyright (C) 2026 Bruno Martin. GPLv3.
  *
- * The admin button after a PIN login, on a machine that offers its admin page
- * behind the remote admin password: there from the first visit. The host
- * offers that page to signed-in sessions only, and the application read the
- * offer once, before the login, so the button showed only after a reload
- * (27/10/2026).
+ * Client PIN sessions do not show the admin page, even when the server offers
+ * the legacy remote password unlock. Admin PIN sessions receive admin access.
  */
 
 // Not localhost, where every browser has the admin page.
@@ -71,10 +68,10 @@ describe('the admin button after a PIN login', () => {
         await vi.waitFor(() => expect(MoonlightApp._initRouter).toHaveBeenCalled());
     }
 
-    it('is there from the first visit when the machine offers its admin page', async () => {
+    it('stays hidden for client PIN login even when password unlock is available', async () => {
         offered = true;
         await signIn();
-        expect(document.getElementById('btn-admin').style.display).toBe('');
+        expect(document.getElementById('btn-admin').style.display).toBe('none');
     });
 
     it('stays hidden where the machine does not offer it', async () => {
