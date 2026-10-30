@@ -11,8 +11,11 @@
 //   hdr=1                        the HDR feed: rgba16float textures and targets
 //                                (the renderer's `linear` mode), dumps as .f16
 //   set=feed,base,chain          which cells (see CELL_SETS), or cells=a,b,c
-//   codec=avc|none               VideoFrames from a WebCodecs encode → decode
+//   codec=avc|hevc|vp9|none      VideoFrames from a WebCodecs encode → decode
 //                                loop (the external-texture feed), or none
+//   enc=sw                       that encode in software (plan B §6: never the
+//                                encoder on the GPU that decodes and is timed);
+//                                vp9 where a phone has no software H.264
 //   pace=back|tick period=16.67  back to back, or one iteration per period
 //   batch=16 batches=8 warm=2 rounds=3   the measurement (ABBA across rounds)
 //   power=high-performance|low-power fallback=1   which adapter
@@ -88,8 +91,8 @@ const CELL_SETS = {
   glchain: ["chain-gl-off", "chain-gl-sgsr", "chain-gl-nis", "chain-gl-fsr1", "chain-gl-mwsr"],
   // The mwsr kernel (plan §3.2, §4.3): `mwsr[:key=val;key=val…]` sets its
   // overrides (show, walong, wacross, ralong, racross, sfull, wmin, dering,
-  // c444, rdown, ll, flat, fc, gz, fz, and the ×2 law's sx2, x2base, x2flat,
-  // x2racross: MWSR_KEYS), the uniforms (tau, sharp), half=1 (the f16
+  // c444, rdown, ll, flat, fc, gz, fz: MWSR_KEYS), the uniforms (tau,
+  // sharp), half=1 (the f16
   // module; the page needs f16=1), mode=up|down (default: by the scale),
   // taps=1|4|9|16 (the reduction's grid) and srgb=1 (SDR only: the input
   // read and the output written through `-srgb` views, the sampler decoding
@@ -101,6 +104,24 @@ const CELL_SETS = {
   mwsr: ["mwsr", "mwsr:dering=0", "mwsr:half=1", "blit+mwsr"],
   // P3: the reduction grids and lights (the mode follows the scale), 4:4:4.
   p3: ["mwsr", "mwsr:srgb=1", "mwsr:taps=9", "mwsr:ll=2", "mwsr:c444=1", "smooth2d"],
+  // Plan B (upscaler-mwsr-b.md §3): MWSR on the planes of a YUV frame.
+  // `yuv:v=N[;c=420|444][;bits=8|10][;mwsr options]` reads planes made from
+  // the input picture once (the kernel alone; v=0 is the RGB kernel on those
+  // planes turned back into RGB, as a browser's pass 0 hands them over);
+  // `split+yuv:…` makes them from the decoder's frame at every iteration, the
+  // browser's pass 0 split in two (Y, UV), to set against `blit+mwsr`.
+  yuv: [
+    "blit+mwsr",
+    "split+yuv:v=1",
+    "split+yuv:v=2",
+    "split+yuv:v=3",
+    "split+yuv:v=4",
+    "mwsr",
+    "yuv:v=1",
+    "yuv:v=2",
+    "yuv:v=3",
+    "yuv:v=4",
+  ],
 };
 
 const VS = /* wgsl */ `
@@ -582,15 +603,25 @@ async function makePicture(kind, w, h, k) {
 
 // ── the video frames ───────────────────────────────────────────────────────
 
-async function makeFrames(pictures, codec, log) {
+async function makeFrames(pictures, codec, log, encSw = false) {
   const w = pictures[0].width;
   const h = pictures[0].height;
   // H.264 High at the level the picture needs: 5.0 holds 1440p60 (22080
   // macroblocks), 4K60 needs 5.1 (36864); the encoder refuses a level too
-  // small for the frame ("no encoder"), as the 4K reduction case did.
+  // small for the frame ("no encoder"), as the 4K reduction case did. VP9
+  // profile 0 at 5.0 or 5.1 likewise, 8 bits.
   const mbs = Math.ceil(w / 16) * Math.ceil(h / 16);
+  const big = mbs > 22080;
   const codecString =
-    codec === "hevc" ? "hvc1.1.6.L120.B0" : mbs > 22080 ? "avc1.640033" : "avc1.640032";
+    codec === "hevc"
+      ? "hvc1.1.6.L120.B0"
+      : codec === "vp9"
+        ? big
+          ? "vp09.00.51.08"
+          : "vp09.00.50.08"
+        : big
+          ? "avc1.640033"
+          : "avc1.640032";
   const chunks = [];
   const encConfig = {
     codec: codecString,
@@ -599,16 +630,16 @@ async function makeFrames(pictures, codec, log) {
     bitrate: 20_000_000,
     framerate: 60,
     latencyMode: "realtime",
-    hardwareAcceleration: "prefer-hardware",
+    hardwareAcceleration: encSw ? "prefer-software" : "prefer-hardware",
   };
-  if (codec !== "hevc") encConfig.avc = { format: "annexb" };
-  else encConfig.hevc = { format: "annexb" };
+  if (codec === "hevc") encConfig.hevc = { format: "annexb" };
+  else if (codec !== "vp9") encConfig.avc = { format: "annexb" };
   let sup = await VideoEncoder.isConfigSupported(encConfig);
-  if (!sup.supported) {
+  if (!sup.supported && !encSw) {
     encConfig.hardwareAcceleration = "no-preference";
     sup = await VideoEncoder.isConfigSupported(encConfig);
-    if (!sup.supported) throw new Error("no encoder for " + codecString);
   }
+  if (!sup.supported) throw new Error("no encoder for " + codecString + (encSw ? " in software" : ""));
   const encHw = encConfig.hardwareAcceleration;
   let encErr = null;
   const encoder = new VideoEncoder({
@@ -769,7 +800,8 @@ async function runGlLab(p, log, ctx) {
   if (bad.length) throw new Error("gl=1 runs chain-gl-* cells only, not " + bad.join(","));
   const pictures = [];
   for (let k = 0; k < 12; k++) pictures.push(await makePicture(content, inW, inH, k));
-  const made = codec !== "none" ? await makeFrames(pictures, codec, log) : makeRgbaFrames(pictures);
+  const made =
+    codec !== "none" ? await makeFrames(pictures, codec, log, p.enc === "sw") : makeRgbaFrames(pictures);
   const frames = made.frames;
   log("frames: " + JSON.stringify(made.info));
   const { WebGlRenderer } = await import(WEBGL_RENDERER_URL);
@@ -1090,11 +1122,11 @@ async function runLabInner(p, log) {
   let frames = [];
   let frameInfo = null;
   const needExt = cellNames.some(
-    (c) => c.startsWith("ext") || c.startsWith("blit") || c.startsWith("chain"),
+    (c) => c.startsWith("ext") || c.startsWith("blit") || c.startsWith("chain") || c.startsWith("split"),
   );
   if (codec !== "none" && needExt && pictures.length) {
     try {
-      const r = await makeFrames(pictures, codec, log);
+      const r = await makeFrames(pictures, codec, log, p.enc === "sw");
       frames = r.frames;
       frameInfo = r.info;
     } catch (e) {
@@ -1203,9 +1235,28 @@ async function runLabInner(p, log) {
     rcas: extractWgsl(src, "RCAS_WGSL"),
   };
   SH.sgsrSrc = sgsrSource(SH.sgsr);
+  // FSR1's 16-bit path (FSR_EASU_H, FSR_RCAS_H), the lab's own port: cells
+  // easuh and fsr1h, for a comparison at each kernel's best precision.
+  const { EASU_H_WGSL, RCAS_H_WGSL, asF32 } = await import("./fsr1-half.js");
+  SH.easuH = EASU_H_WGSL;
+  SH.rcasH = RCAS_H_WGSL;
+  // easuh32, fsr1h32: the same port lowered to f32 (its logic, on SwiftShader)
+  SH.easuH32 = asF32(EASU_H_WGSL);
+  SH.rcasH32 = asF32(RCAS_H_WGSL);
+  // SGSR1's half precision (sgsr1.h computes in half): cells sgsrh, sgsrh32
+  const { sgsrHalf } = await import("./sgsr1-half.js");
+  SH.sgsrH = sgsrHalf(SH.sgsr);
+  SH.sgsrH32 = asF32(SH.sgsrH);
+  const needF16 = (name) => {
+    if (!device.features.has("shader-f16"))
+      throw new Error(name + ": the device has no shader-f16 (f16=1 asks for it)");
+  };
   const { mwsrWgsl, mwsrUniforms, mwsrRegime } = await import(MWSR_URL);
 
   const pipelines = new Map();
+  // The formats of the targets that are neither the output nor texFormat
+  // (plan B's planes), by their name in `views`.
+  const targetFormats = {};
   const pipeline = (
     key,
     code,
@@ -1225,11 +1276,12 @@ async function runLabInner(p, log) {
         targets: [
           {
             format:
-              target === "out"
+              targetFormats[target] ??
+              (target === "out"
                 ? outFormat
                 : target === "out-srgb"
                   ? outFormat + "-srgb"
-                  : texFormat,
+                  : texFormat),
           },
         ],
         constants,
@@ -1327,6 +1379,16 @@ async function runLabInner(p, log) {
           group: bind(pl, [sampler, srcView, { buffer: sgsrU }]),
         };
       }
+      case "sgsrh":
+      case "sgsrh32": {
+        if (name === "sgsrh") needF16(name);
+        const pl = pipeline(name, name === "sgsrh" ? SH.sgsrH : SH.sgsrH32, "out");
+        return {
+          pipeline: pl,
+          target: "out",
+          group: bind(pl, [sampler, srcView, { buffer: sgsrU }]),
+        };
+      }
       case "sgsr-src": {
         const pl = pipeline("sgsr-src", SH.sgsrSrc, "out");
         return {
@@ -1359,12 +1421,31 @@ async function runLabInner(p, log) {
           group: bind(pl, [srcView, sampler, { buffer: easuU }]),
         };
       }
+      case "easuh":
+      case "easuh32": {
+        if (name === "easuh") needF16(name);
+        const code = name === "easuh" ? SH.easuH : SH.easuH32;
+        const pl = pipeline(name + "-out", code, "out", ["vs_main", "fs_main"]);
+        return {
+          pipeline: pl,
+          target: "out",
+          group: bind(pl, [srcView, sampler, { buffer: easuU }]),
+        };
+      }
       default:
         throw new Error("kernel " + name + "?");
     }
   };
-  const easuToInterm = (srcView) => {
-    const pl = pipeline("easu-interm", SH.easu, "interm", [
+  // the FSR1 variant: "" the product's fp32 port, "h" the 16-bit one, "h32"
+  // the 16-bit one lowered to f32
+  const FSR1_SH = {
+    "": [SH.easu, SH.rcas],
+    h: [SH.easuH, SH.rcasH],
+    h32: [SH.easuH32, SH.rcasH32],
+  };
+  const easuToInterm = (srcView, v = "") => {
+    if (v === "h") needF16("fsr1h");
+    const pl = pipeline("easu" + v + "-interm", FSR1_SH[v][0], "interm", [
       "vs_main",
       "fs_main",
     ]);
@@ -1374,8 +1455,8 @@ async function runLabInner(p, log) {
       group: bind(pl, [srcView, sampler, { buffer: easuU }]),
     };
   };
-  const rcasFrom = (srcView) => {
-    const pl = pipeline("rcas", SH.rcas, "out", ["vs_main", "fs_main"]);
+  const rcasFrom = (srcView, v = "") => {
+    const pl = pipeline("rcas" + v, FSR1_SH[v][1], "out", ["vs_main", "fs_main"]);
     return {
       pipeline: pl,
       target: "out",
@@ -1390,6 +1471,111 @@ async function runLabInner(p, log) {
       ext: (ext) => bind(pl, [sampler, ext]),
     };
   };
+
+  // Plan B: the planes of a YUV frame (mwsr-yuv.js). One set per chroma and
+  // depth, and per source: `p` made once from the input picture, `s` made
+  // from the decoder's frame by the split cells at every iteration.
+  const YUV = await import("./mwsr-yuv.js");
+  const plYuv = L([
+    { binding: 0, visibility: FR, sampler: {} },
+    { binding: 1, visibility: FR, texture: { sampleType: "float" } },
+    { binding: 2, visibility: FR, buffer: {} },
+    { binding: 3, visibility: FR, texture: { sampleType: "float" } },
+  ]);
+  const plPlanesTex = L([
+    { binding: 0, visibility: FR, texture: { sampleType: "float" } },
+  ]);
+  const plRgbPlanes = L([
+    { binding: 0, visibility: FR, sampler: {} },
+    { binding: 1, visibility: FR, texture: { sampleType: "float" } },
+    { binding: 2, visibility: FR, texture: { sampleType: "float" } },
+  ]);
+  const planeSets = new Map();
+  const planeSet = (c, bits, src) => {
+    const key = `${src}${c}-${bits}`;
+    if (planeSets.has(key)) return planeSets.get(key);
+    const d = c === "444" ? 1 : 2;
+    const [fy, fuv] = bits === 10 ? ["r16float", "rg16float"] : ["r8unorm", "rg8unorm"];
+    const use = T.TEXTURE_BINDING | T.RENDER_ATTACHMENT;
+    const set = {
+      y: "y-" + key,
+      uv: "uv-" + key,
+      yOut: "yout-" + key,
+      rgb: "rgb-" + key,
+      d,
+      bits,
+    };
+    const add = (name, w, h, fmt) => {
+      views[name] = mkTex(w, h, fmt, use).createView();
+      targetFormats[name] = fmt;
+    };
+    add(set.y, inW, inH, fy);
+    add(set.uv, inW / d, inH / d, fuv);
+    add(set.yOut, outW, outH, fy);
+    add(set.rgb, inW, inH, texFormat);
+    const consts = bits === 10 ? { BITS: 10 } : {};
+    if (src === "p") {
+      // made once, from the input picture, outside any measure
+      const fromRgb = (which, target) => {
+        const pl = pipeline(
+          `planes-${which}-${key}`,
+          YUV.planesFromRgbWgsl(which),
+          target,
+          ["vs", "fs"],
+          plPlanesTex,
+          which === "uv" ? { ...consts, CHROMA_DIV: d } : consts,
+        );
+        return { pipeline: pl, target, group: bind(pl, [inView]) };
+      };
+      const toRgb = rgbPass(set, set.rgb, false);
+      const enc = device.createCommandEncoder();
+      for (const ps of [fromRgb("y", set.y), fromRgb("uv", set.uv), toRgb]) {
+        const pass = enc.beginRenderPass({
+          colorAttachments: [{ view: views[ps.target], loadOp: "clear", storeOp: "store" }],
+        });
+        pass.setPipeline(ps.pipeline);
+        pass.setBindGroup(0, ps.group);
+        pass.draw(3);
+        pass.end();
+      }
+      device.queue.submit([enc.finish()]);
+    }
+    planeSets.set(key, set);
+    return set;
+  };
+  // The planes back to RGB at the target's size: the RGB a browser's pass 0
+  // gives from them (yFull false), or V1's composition of the luma MWSR drew
+  // at the output size with the UV plane.
+  const rgbPass = (set, target, yFull) => {
+    const consts = { ...(set.bits === 10 ? { BITS: 10 } : {}), Y_FULL: yFull ? 1 : 0 };
+    const pl = pipeline(
+      `rgb-planes-${target}-${yFull ? 1 : 0}`,
+      YUV.rgbFromPlanesWgsl(),
+      target,
+      ["vs", "fs"],
+      plRgbPlanes,
+      consts,
+    );
+    return {
+      pipeline: pl,
+      target,
+      group: bind(pl, [sampler, views[yFull ? set.yOut : set.y], views[set.uv]]),
+    };
+  };
+  // The browser's pass 0 split in two: the planes from the decoder's frame.
+  const splitPasses = (set) =>
+    ["y", "uv"].map((which) => {
+      const target = which === "y" ? set.y : set.uv;
+      const pl = pipeline(
+        `split-${which}-${target}`,
+        YUV.planesFromExtWgsl(which),
+        target,
+        ["vs", "fs"],
+        plBlit,
+        set.bits === 10 ? { BITS: 10 } : {},
+      );
+      return { pipeline: pl, target, ext: (ext) => bind(pl, [sampler, ext]) };
+    });
   const tapsPass = (feed, n, mode, fw, srcView, srgb = false) => {
     const key = `${feed}-${mode}${n}${fw ? "-fw" : ""}${srgb ? "-srgb" : ""}`;
     const target = srgb ? "out-srgb" : "out";
@@ -1431,13 +1617,6 @@ async function runLabInner(p, log) {
     fc: "FLAT_C",
     gz: "GAZE",
     fz: "FLAT_ZONE",
-    // the ×2 law (plan §12, J39): its full scale, the flat picture as the
-    // edge path's base, the flat path's unsharp, R_ACROSS at the law's
-    // full weight
-    sx2: "S_X2",
-    x2base: "X2_BASE",
-    x2flat: "X2_FLAT",
-    x2racross: "X2_R_ACROSS",
   };
   // The gaze zone's uniforms (MwsrShader's MWSR_ZONE): a cell naming one of
   // them, or gaze=, takes the GAZE text unless gz= says otherwise.
@@ -1602,15 +1781,77 @@ async function runLabInner(p, log) {
       passes.push(mwsrPass(name, feed, opts, pre ? views.blit : inView));
       return { name, feed: pre || feed === "ext" ? "ext" : "tex", passes };
     }
-    const k = /^(blit\+)?(sgsr-repo|sgsr-src|nis|easu|rcas|fsr1)$/.exec(name);
+    const y = /^(split\+)?yuv(?::(.*))?$/.exec(name);
+    if (y) {
+      if (hdr) throw new Error(name + ": the planes are SDR (8 or 10 bits)");
+      const split = !!y[1];
+      const opts = Object.fromEntries(
+        (y[2] || "")
+          .split(";")
+          .filter(Boolean)
+          .map((kv) => kv.split("=")),
+      );
+      const v = Number(opts.v ?? 2);
+      const c = opts.c ?? "420";
+      const bits = Number(opts.bits ?? 8);
+      if (![0, 1, 2, 3, 4].includes(v) || !["420", "444"].includes(c) || ![8, 10].includes(bits))
+        throw new Error(name + ": v=0..4, c=420|444, bits=8|10");
+      if (split && v === 0) throw new Error(name + ": the split's v=0 is blit+mwsr");
+      const set = planeSet(c, bits, split ? "s" : "p");
+      const over = {};
+      const uni = {};
+      let half = false;
+      for (const [k, val] of Object.entries(opts)) {
+        if (k === "v" || k === "c" || k === "bits") continue;
+        if (k === "tau" || k === "sharp") uni[k] = Number(val);
+        else if (k === "half") half = val === "1";
+        else if (k in MWSR_KEYS) over[MWSR_KEYS[k]] = Number(val);
+        else throw new Error(name + ": option " + k + "?");
+      }
+      if (half && !device.features.has("shader-f16"))
+        throw new Error(name + ": the device has no shader-f16 (f16=1 asks for it)");
+      const passes = split ? splitPasses(set) : [];
+      const ub = uniform(mwsrUniforms(inW, inH, outW, outH, uni));
+      const up = mwsrWgsl({ feed: "tex", half });
+      if (v === 0) {
+        // the RGB kernel on the planes made RGB again (the fair V0 at 4:2:0)
+        const pl = pipeline(name, up, "out", ["vs", "fs"], plTex, over);
+        passes.push({
+          pipeline: pl,
+          target: "out",
+          group: bind(pl, [sampler, views[set.rgb], { buffer: ub }]),
+        });
+      } else {
+        const code =
+          v === 1
+            ? YUV.yKernel(up, "plane")
+            : v === 2
+              ? YUV.yKernel(up, "rgb")
+              : v === 3
+                ? YUV.rawKernel(up)
+                : YUV.rgbKernel(up);
+        const target = v === 1 ? set.yOut : "out";
+        const consts = { ...over, ...(bits === 10 ? { BITS: 10 } : {}) };
+        const pl = pipeline(name, code, target, ["vs", "fs"], plYuv, consts);
+        passes.push({
+          pipeline: pl,
+          target,
+          group: bind(pl, [sampler, views[set.y], { buffer: ub }, views[set.uv]]),
+        });
+        if (v === 1) passes.push(rgbPass(set, "out", true));
+      }
+      return { name, feed: split ? "ext" : "tex", passes };
+    }
+    const k = /^(blit\+)?(sgsr-repo|sgsr-src|sgsrh|sgsrh32|nis|easu|easuh|easuh32|rcas|fsr1|fsr1h|fsr1h32)$/.exec(name);
     if (k) {
       const pre = !!k[1];
       const srcView = pre ? views.blit : inView;
       const passes = pre ? [blitPass()] : [];
       if (k[2] === "rcas") passes.push(rcasFrom(views.mid));
-      else if (k[2] === "fsr1")
-        passes.push(easuToInterm(srcView), rcasFrom(views.interm));
-      else passes.push(kernelPass(k[2], srcView));
+      else if (k[2].startsWith("fsr1")) {
+        const v = k[2].slice(4); // "", "h", "h32"
+        passes.push(easuToInterm(srcView, v), rcasFrom(views.interm, v));
+      } else passes.push(kernelPass(k[2], srcView));
       return { name, feed: pre ? "ext" : "tex", passes };
     }
     if (name.startsWith("chain-"))
@@ -1620,7 +1861,7 @@ async function runLabInner(p, log) {
 
   // Timestamps: a query set wide enough for a batch of the longest chain,
   // resolved once per batch into a mappable buffer.
-  const maxPasses = 3;
+  const maxPasses = 4;
   const qCount = 2 * maxPasses * batch;
   let querySet = null;
   let resolveBuf = null;

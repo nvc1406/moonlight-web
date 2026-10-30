@@ -8,6 +8,10 @@ la qualité se mesure sur SwiftShader au fil de l'eau, les temps sur le RTX à l
 session d'orchestration. Règle de salle blanche (§10.2) : les constantes ci-dessous sont les
 nôtres, produites par ce journal.
 
+**Correction du 29/10/2026.** Le GPU intégré du DualRTX n'est pas un Radeon 780M, mais celui du
+Ryzen 9 9900X : RDNA 2, 2 unités de calcul, id 0x13C0 (plan B §9). Dans les entrées ci-dessous, le
+« 780M » du DualRTX désigne ce GPU. Seul l'UM790Pro a un vrai 780M (J36-J37).
+
 ## 2026-10-21 — J1, le noyau de base tel qu'écrit (`MwsrShader.js`, P2.1)
 
 **Le texte.** Une passe, feed `texture_2d` d'abord. Cinq échantillons bilinéaires : le centre C,
@@ -2789,3 +2793,247 @@ A et B tirés au sort.
 **Vérifié dans le code.** Aucun chemin du produit ne pose `DERING` : `MwsrShader.js` le déclare à 2, et
 `setMwsrOverrides` n'est appelé que par les pages du labo. `DERING 1` ne vit plus qu'en option de labo : les cellules
 `mwsr:dering=1`, `hdr-compare.html`, `hdr_check.py --ablate` et `--dering`.
+
+## 2026-10-28 — J51, la vitesse de J47 refaite au calme, et la traîne p99 localisée
+
+**La demande.** V10, go de Bruno le 28/10 au matin, par 59 : refaire la vitesse HDR et SDR de J47 sur la RTX qui ne
+décode pas, et localiser la traîne p99 que J47 avait laissée sur la réduction HDR à ×0,667.
+
+**Le banc (créneau de 59, 08:47 à 08:59).**
+- **La carte** : la RTX 5060 Ti du bus 01 (DISPLAY1), celle de J47.
+  - LUID revérifiés le 28/10 par `D3DKMTOpenAdapterFromGdiDisplayName` : DISPLAY1 → 0,79382 (bus 01), DISPLAY5 →
+    0,84633 (bus 03), 780M 0,89691.
+  - Ni encodeur ni décodeur actif sur la carte pendant tout le banc.
+- **Le Chrome** : celui de J47, sans tête, épinglé par `--use-adapter-luid`, l'épinglage vérifié par les compteurs
+  WDDM avant toute mesure.
+- **Ce qui est nouveau** :
+  - la page date chaque tirage. Le `seq` de `hdr-time.json` porte maintenant, pour chacun, la passe 0, le noyau et
+    son début ;
+  - à côté de la page, deux relevés. nvidia-smi lit la carte toutes les 50 ms (horloges, P-state). Les compteurs WDDM
+    lisent, toutes les deux secondes environ, le moteur 3D de chaque processus sur la carte. Pendant les trois passes,
+    seuls dwm et Discord y ont dessiné, sous 3,5 %. Pendant la passe ciblée, dwm est monté une fois à 20 %.
+- **HDR** : trois passes de 800 tirages par variante, sur les cas de J47.
+- **SDR** : les cellules `chain-mwsr` de J47, deux tours ABBA. « Avant » = 87286046.
+
+**HDR : les gains de J47 tiennent.** Médiane des trois passes, total des passes en ms, p50 / p99 ; « après » est
+`mwsr`, « avant » `mwsr-enc`.
+
+| cas | après | avant | écart | J47 |
+|---|---|---|---|---|
+| témoin 720p → 1440p (même chemin) | 0,1216 / 0,123 | 0,1215 / 0,123 | +0,1 % | −1,3 % |
+| 2160p → 1440p (×0,667) | 0,3050 / 0,311 | 0,3451 / 0,354 | **−11,6 %** | −11,3 % |
+| 2160p → 720p (×1/3) | 0,3231 / 0,333 | 0,3498 / 0,357 | **−7,6 %** | −7,4 % |
+| 1440p → 720p (×0,5) | 0,0994 / 0,102 | 0,1124 / 0,114 | **−11,5 %** | −11,2 % |
+
+- Le p99 de ×0,667 est de 0,311 ms, contre 2,914 en J47.
+- Sur les 2400 tirages mesurés par variante, un seul dépasse trois fois la médiane (0,97 ms).
+
+**La traîne vient de l'état d'énergie de la carte, pas du shader.**
+- **Ce qu'on voit** : au premier passage, les 8 premiers tirages de ×0,667 prennent 2,5 à 3,5 ms (passe 0 1,4 à 2,5,
+  noyau 0,7 à 1,2). C'est la grandeur exacte de la traîne de J47.
+  - Ces 8 tirages tombent tous en P5, mémoire à 810 MHz.
+  - Dès que la carte passe en P3 (7001 MHz), les mêmes tirages prennent 0,31 ms.
+- **Pourquoi** : la réduction 4K est bornée par la mémoire. À un huitième de son horloge, elle va neuf fois moins
+  vite.
+- **Ce que fait la carte** :
+  - le banc la charge peu et par à-coups : un tirage, puis l'attente de la relecture des horodatages ;
+  - elle reste donc en P3, mémoire à moitié, et redescend en P5 ou P8 dès une pause ;
+  - le pilote met environ 0,5 s à remonter.
+- **La preuve, sur les deux variantes** : une passe ciblée, `--gap 4000`, avec 4 s d'arrêt avant chaque bloc. Deux
+  passes de 160 tirages sur ×0,667. Les deux variantes paient pareil :
+  - tirages lents : 28 et 9 pour « après », 47 et 51 pour « avant » ;
+  - il y a trois paliers, et l'écart tient à chacun (ms) :
+
+  | mémoire | après | avant |
+  |---|---|---|
+  | 14 001 MHz (P0) | 0,24 | 0,28 |
+  | 7001 MHz (P3) | 0,31 | 0,35 |
+  | 810 MHz (P5) | 2,5 à 3,5 | 2,5 à 3,5 |
+
+- **Pourquoi seulement « après » en J47 : non établi.** Il n'y avait pas de relevé d'horloge ce jour-là. La grandeur,
+  elle, est celle du P5.
+- **Dans le produit** :
+  - un stream charge la carte sans pause : décodage, dessin et présentation, à chaque image ;
+  - une image en P5 coûterait au pire 3,5 ms, sous les 8,3 ms d'une image à 120 Hz, le temps que le pilote remonte ;
+  - rien à changer.
+- **Pour les bancs** :
+  - les temps absolus de ce banc sont ceux de P3, pas du maximum ;
+  - seules les comparaisons par blocs ABBA sont sûres ;
+  - un temps absolu doit dire son P-state, ce que `seq` et le relevé nvidia-smi permettent maintenant.
+
+**SDR : pas de régression.** `gpu` p50 des cellules `chain-mwsr`, passes faites entièrement à 7001 MHz.
+- **Les écarts** :
+  - ×2 : −1,1 % (0,1036 contre 0,1048), et +0,2 % à 60 Hz ;
+  - ×1,33 : 0,1154 contre 0,1156, et +0,3 % à 60 Hz ;
+  - ×0,67 : −0,1 %, et +0,3 % à 60 Hz.
+- **Les passes qui s'écartent ont changé de palier en cours de route** :
+  - en partie à 810 MHz : ×1,33 « avant », de 0,17 à 0,22 ; ×1,33 « après », 0,245 une fois ;
+  - en partie à 14 001 MHz : ×0,67 « après », 0,12.
+- **J47 vérifié** : J47 attribuait son écart de ×1,33 à « une horloge plus basse ». C'est vérifié cette fois.
+
+**L'outillage.**
+- `hdr-check.js` : chaque entrée de `seq` porte la passe 0, le noyau et l'heure de début ; `&gap=MS` met la pause
+  avant chaque bloc (`hdr_check.py --gap MS`).
+- Le banc lui-même (Chrome épinglé, relevés nvidia-smi et WDDM) reste hors dépôt, comme celui de J47.
+
+**Pour rejouer.** Lancer `hdr_check.py --time 800 --cdp PORT` dans un Chrome qu'on a soi-même épinglé et vérifié sur
+le GPU, avec nvidia-smi à côté (`-lms 50`). Ajouter `--gap 4000` pour voir les paliers.
+
+## 2026-10-28 — J52, MWSR pour les autres programmes : le jumeau HLSL, et `X2_FLAT` d'un GPU à l'autre
+
+**La demande.** Bruno, le 28/10 : distribuer le shader à d'autres développeurs. Ses choix :
+- la licence MIT, pour le seul shader : le reste du dépôt reste sous GPL-3 ;
+- un dossier `mwsr/` dans le dépôt ;
+- le nom MWSR ;
+- les shaders et le module, plus du C++ pour l'intégrer comme dans sa PR de moonlight-qt (`d3d12va_shaders.cpp`).
+
+**Ce que contient `mwsr/`** (cb766889, puis ce commit) :
+- `generate.mjs` l'écrit tout entier depuis `MwsrShader.js` ;
+- `mwsrDist.test.js` échoue dès qu'un fichier retarde sur le module ;
+- les fichiers : WGSL, GLSL ES 3.00, HLSL (Direct3D 11 et 12), `cpp/mwsr.h` (le côté processeur, C++17 sans
+  dépendance), `cpp/example_d3d11.cpp` (une intégration complète en un fichier) et un README anglais.
+
+**Le jumeau HLSL (`mwsrHlsl`).**
+- **Écrit à partir des mêmes tables que le WGSL**, ligne à ligne. Chaque constante devient une définition `MWSR_<nom>`,
+  que le compilateur reçoit comme NIS reçoit les siennes dans moonlight-qt. Les registres aussi sont des définitions.
+- **Les dérivées gardent leur signe** : l'axe y de l'écran descend sous Direct3D comme sous WebGPU.
+- **Compilé avec FXC** (`ps_5_0`, `vs_5_0`) **et DXC 1.8** (`ps_6_0`, HLSL 2021 ; `ps_6_2` avec les types 16 bits pour
+  la variante `min16float`), avec les valeurs par défaut et avec les variantes.
+- **Vérifié par les tests du module** : chaque constante avec sa valeur par défaut, les dérivées avant le branchement,
+  les mêmes grilles de réduction, aucune constante des noyaux voisins.
+
+**La conformité, sans GPU** : le HLSL sur WARP, par l'exemple D3D11, contre le WGSL sur SwiftShader (la page refuse
+tout autre adaptateur). Il y a 16 cas : le jeu 0 A.D., l'étalon de Bruno et une mire de texte, agrandis à ×2 et ×1,33,
+réduits à ×0,667, ×1/3 et ×0,21, avec ou sans vues sRGB.
+- **Le filtrage bilinéaire seul** (tout en chemin plat, `FLAT_TAPS 1`) : 1/255 au plus. C'est l'écart des deux
+  rastériseurs entre eux.
+- **Les agrandissements**, par défaut comme avec `FLAT_TAPS 3`, `CHROMA444 1` et `DERING 1` :
+  - de 0,0001 à 0,02 % des pixels au-delà de 2/255, pour un PSNR de 66 à 73 dB ;
+  - ce sont des quads proches du seuil, que le vote envoie de l'autre côté : les votes ne diffèrent que sur 0,0008 %
+    des pixels.
+- **Les réductions** : 1/255 au plus.
+- **La variante `min16float`** sur WARP : 2/255 au plus de la version f32.
+- **`mwsr.h` contre le module** : mêmes modes et mêmes 16 flottants, au bit près, sur 484 combinaisons de tailles.
+
+**`X2_FLAT` n'est pas stable d'un GPU à l'autre.**
+- **L'écart** : avec `X2_FLAT 0,5` (une constante de labo, neutre par défaut), 1,1 % des pixels diffèrent de plus de
+  8/255.
+- **Le mécanisme** : ce n'est pas le jumeau, les deux textes sont identiques.
+  - Sur un pixel du chemin plat, le gradient de luma est presque nul.
+  - WARP l'arrondit à 0 exactement, SwiftShader en garde une trace (≥ 1e-6).
+  - La normalisation de `n` fait de cette trace une direction unité, et `X2_FLAT` affûte le long de cette direction :
+    ici à la verticale, en travers des traits d'un pixel.
+- **Ce qui a été écarté** : les dérivées « fines » à la place des « grossières » ne changent rien ; `X2_BASE` et
+  `X2_R_ACROSS`, seuls, restent dans le bruit des agrandissements.
+- **Conséquence** : aucune pour le produit, qui ne pose pas `X2_FLAT`. Le README le déconseille sans mesure sur ses
+  cibles.
+- **Correctif possible, à la décision de Bruno** : doser l'affûtage du chemin plat par la taille du gradient, au lieu
+  de sa seule direction.
+
+**Pour rejouer** (hors dépôt, scratchpad `mwsrdist/`) :
+- `conform.py` dessine sur WARP et sur SwiftShader, puis compare ;
+- `check.py` compile chaque texte dans deux Chrome SwiftShader (WebGPU, puis WebGL2) ;
+- `cppcheck` compare `mwsr.h` au module.
+
+## 2026-10-28 — J53, MWSR face à FSR1, NIS et SGSR1 : le comparatif public, chacun à sa meilleure précision
+
+**La demande.** Bruno, le 28/10 :
+- une section du README de `mwsr/` qui compare MWSR à FSR1, NIS et SGSR1 : des zooms, des graphiques de qualité et de
+  temps, un tableau de ce que chacun sait faire ;
+- une image 1080p → 1440p pour le Discord de Moonlight (hors dépôt).
+
+Ses choix : les images publiques sont 0 A.D. (CC BY-SA 3.0) et la mire de texte du labo ; les temps sont pris sur la
+RTX 5060 Ti et le 780M, l'iPhone 13 Pro plus tard. Puis : « Prépare [FSR1 en fp16] avant, pour avoir un comparatif
+juste. »
+
+**FSR1 et SGSR1 en 16 bits, dans le labo seulement.**
+- `fsr1-half.js` porte le chemin 16 bits d'AMD (`FsrEasuH`, deux échantillons à la fois, et `FsrRcasH`) ;
+  `sgsr1-half.js` porte SGSR1 tel que Qualcomm l'écrit (`half` partout, coordonnées en `float`). Les notices MIT et
+  BSD-3 suivent.
+- Nouvelles cellules : `easuh`, `fsr1h`, `sgsrh`.
+- SwiftShader n'a pas `shader-f16`, et Chrome ne propose aucun adaptateur WARP à WebGPU.
+  - La logique se vérifie donc abaissée en f32 (`asF32`, cellules `easuh32`, `fsr1h32`, `sgsrh32`). FSR1 tombe à
+    1-2/255 de son port fp32 sur 0,004 % des pixels ; SGSR1 l'égale au bit près.
+  - Un premier contrôle de SGSR1 était faux : les littéraux à exposant n'étaient pas convertis, le pipeline était
+    invalide, et la cellule montrait la sortie de la précédente. Il a été corrigé et refait.
+- Sur GPU, chaque texte 16 bits est d'abord comparé à son texte 32 bits, et rien n'est chronométré au-delà de 4/255 sur
+  0,1 % des pixels. Résultats : FSR1 0,001-0,006 %, SGSR1 0,004-0,045 %, au pire 42/255 sur quelques pixels, SSIM au
+  millième.
+
+**Trois créneaux de 59** (14:12, 14:29, 14:49 ; RTX du bus 01 puis 780M).
+- Chrome sans tête épinglé par `--use-adapter-luid`, vérifié par les compteurs WDDM (0x13616 seul ; 0x15e5b, 0 sur
+  0x14a99).
+- La RTX était en P0 pendant chaque chronométrage, après 1,8-1,9 s de P8 au chargement de la page.
+- Bus 03, NVENC, --dev et modes d'écran : pas touchés. « chrome left: 0 » à chaque fois.
+- Temps GPU par lots de 100 dessins, 3 tours de 6 lots, médiane par dessin.
+
+| 1080p → 1440p, 0 A.D. | RTX f32 | RTX f16 | 780M f32 | 780M f16 |
+|---|---|---|---|---|
+| MWSR | 0,116 | 0,133 | 3,91 | 3,80 |
+| FSR1 | 0,278 | 0,265 | 9,46 | 6,33 |
+| SGSR1 | 0,118 | 0,156 | 4,44 | 2,97 |
+| NIS (notre portage) | 0,904 | — | 13,78 | — |
+| bilinéaire | 0,029 | — | 0,449 | — |
+
+- Le 16 bits ne gagne rien sur NVIDIA ; il gagne 33 % pour FSR1, 33 % pour SGSR1 et 3 % pour MWSR sur le 780M.
+- Le 780M donne les mêmes ordres de grandeur qu'au P0 (FSR1 9,4 ms) et en J49 (MWSR 3,0 ms sur l'étalon). Comme
+  son horloge n'est pas fixée, le README invite à lire ses chiffres comme des rapports.
+- **SGSR1 en half est le plus rapide sur l'iGPU** (2,97 contre 3,80 ms sur 0 A.D., 1,50 contre 2,85 sur le texte).
+  MWSR reste au niveau de SGSR1 sur la RTX, et 1,7 à 2,3 fois moins cher que FSR1.
+- NIS est marqué « notre portage » : NVIDIA livre un compute shader à mémoire partagée, plus rapide que notre
+  transcription par fragment.
+
+**Qualité** (SSIM de la luma ×100 / dépassement, mêmes chiffres sur la RTX, le 780M et SwiftShader) :
+
+| | jeu ×1,33 | texte ×1,33 | jeu ×2 | texte ×2 |
+|---|---|---|---|---|
+| MWSR | 85,9 / 0,03 % | 96,0 / 0 % | 66,2 / 0,01 % | 86,1 / 0 % |
+| FSR1 | 87,5 / 13,7 % | 94,4 / 0,2 % | 68,0 / 2,9 % | 84,7 / 0,3 % |
+| NIS | 82,8 / 42,6 % | 95,6 / 4,4 % | 69,5 / 41,7 % | 87,6 / 7,1 % |
+| SGSR1 | 85,6 / 6,5 % | 95,3 / 2,7 % | 66,9 / 6,3 % | 87,6 / 4,4 % |
+
+**Lecture**, telle que le README la donne :
+- FSR1 est le plus fidèle sur le jeu, au prix d'un halo ;
+- MWSR est le plus fidèle sur le texte à ×1,33, sans aucun halo, et le plus doux à ×2 sur le jeu ;
+- SGSR1 est proche de MWSR, et le plus rapide sur l'iGPU ;
+- MWSR est seul à réduire et à lire le 4:4:4. Pour le HDR sans tone map, ils sont deux : MWSR et NIS.
+
+**Dans le dépôt** :
+- la section « Next to FSR1, NIS and SGSR1 » de `mwsr/README.md` : texte, zooms, deux graphiques clair/sombre, deux
+  tableaux, ce que chacun sait faire, la méthode, les marques et la licence de l'image ;
+- `mwsr/docs/` : `zoom.png` (les recadrages de 0 A.D., sous CC BY-SA 3.0) et les quatre SVG.
+
+**Après le tag** :
+- l'iPhone 13 Pro, par 59 quand Bruno est disponible ;
+- la page interactive `moonlightweb.top/mwsr/`, déployée avec le site, avec le temps GPU par lots (le comparateur
+  mesure par image, au plancher de 1 ms sur NVIDIA, J37) ;
+- un NIS en compute shader, si Bruno veut le comparer à son vrai coût.
+
+## 2026-10-28 — J54, la loi ×2 retirée (A29)
+
+**La décision.** Bruno, le 28/10 au soir, par 59 : « Si on doit faire quelques tests avec le Shader, alors je
+souhaiterai en profiter pour supprimer X2 pour la v0.4.1 ». A29, prévue pour la v0.4.2, passe donc avant le tag.
+
+**Ce qui part.**
+- Les quatre constantes de la loi ×2 de J39 : `S_X2`, `X2_BASE`, `X2_FLAT` et `X2_R_ACROSS`. Elles étaient
+  neutres par défaut, et le produit ne les a jamais réglées.
+- Leur code, dans les trois jumeaux (WGSL, GLSL, HLSL) :
+  - le chemin plat rend son cubique tel quel ;
+  - la paire en travers est à `R_ACROSS` ;
+  - la base du mélange et la cohérence lisent le même échantillon bilinéaire (`Ch`) ;
+  - la normale de l'arête n'est plus calculée sur le chemin plat.
+- Leurs réglages : dans le labo (`mwsr:sx2`, `x2base`, `x2flat`, `x2racross`), dans le comparateur (`x2b`, `x2r`,
+  `x2f`, leurs curseurs et leurs liens), et dans le README de `mwsr/` (le tableau des constantes, les deux
+  paragraphes qui le suivaient, la valeur conseillée « texte à ×2 », l'exemple 4:4:4).
+- L'instabilité de `X2_FLAT` d'un GPU à l'autre, notée en J52, disparaît avec elle.
+
+**Vérifié, sur SwiftShader et WARP seulement** :
+- dorés (`--golden-check`) : OK avant et après, au bit près ;
+- conformité des jumeaux WebGPU et WebGL2 (`--conformity`, les deux côtés) : OK, FLIP 0,000, au plus 0,05 dB ;
+- jumeau HLSL sur WARP contre WGSL sur SwiftShader (`mwsrdist/conform.py`, les 12 cas hors loi ×2) : les mêmes
+  chiffres qu'en J52, cas par cas ;
+- `node mwsr/generate.mjs --check`, `node scripts/website/build-site.mjs --check` (la page `/mwsr/` copie le
+  module), 184 fichiers de tests et 1962 tests verts.
+
+Aucun GPU réel n'a servi : le code retiré ne tournait pas aux valeurs par défaut, et les dorés le montrent au bit
+près. À l'œil de Bruno, comme avant, le ×2 (720p → 1440p) sur texte et sur jeu.

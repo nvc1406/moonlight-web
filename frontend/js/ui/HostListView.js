@@ -794,6 +794,10 @@ export class HostListView {
                 h.currentGameId,
                 h.resumableApps,
                 h.restartSupported,
+                // The native host's display state: without it here a virtual
+                // display going off never reaches the card, nor the app list
+                // the card then asks for again.
+                h.nativeDisplay,
             ]),
         );
     }
@@ -933,6 +937,7 @@ export class HostListView {
                 tmp.innerHTML = this.renderCard(host);
                 card = tmp.firstElementChild;
                 card.dataset.fingerprint = fp;
+                card.dataset.nativeDisplay = JSON.stringify(host.nativeDisplay);
             } else if (card.dataset.fingerprint !== fp) {
                 // Data changed — replace just this card, unless its kebab is
                 // open.
@@ -949,10 +954,23 @@ export class HostListView {
                 if (card.querySelector('.host-menu:not([hidden])')) {
                     this._staleCards = true;
                 } else {
+                    // The native host's displays moved (the virtual display
+                    // went on or off, and with "other screens off" the
+                    // physical ones with it): the list this page holds may
+                    // have been asked for in between, so it is confirmed
+                    // again like a remembered one.
+                    const entry = this.appsByHost[host.uuid];
+                    if (
+                        entry &&
+                        entry.apps &&
+                        card.dataset.nativeDisplay !== JSON.stringify(host.nativeDisplay)
+                    )
+                        entry.fromCache = true;
                     const tmp = document.createElement('div');
                     tmp.innerHTML = this.renderCard(host);
                     const newCard = /** @type {HTMLElement} */ (tmp.firstElementChild);
                     newCard.dataset.fingerprint = fp;
+                    newCard.dataset.nativeDisplay = JSON.stringify(host.nativeDisplay);
                     card.replaceWith(newCard);
                     card = newCard;
                 }

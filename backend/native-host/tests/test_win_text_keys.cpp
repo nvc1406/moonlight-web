@@ -347,22 +347,27 @@ void frenchLegacy(const WinKeyLayout& fr)
 
     // A French AltGr held for "|", the same layout on both sides: its left Alt
     // gives way to the right one for the key, and its Ctrl is put back after
-    // the right Alt, which Windows lets go of with it.
+    // the right Alt, which Windows lets go of with it. Every Alt is masked,
+    // under the Ctrl too: the client lets go of its Ctrl first, and the left
+    // Alt put back alone after the key was then a tap of Alt for Notepad,
+    // whose KeyTips came on (28/10/2026).
     {
         WinHeldMods altGr;
         altGr.ctrl = altGr.alt = altGr.altLevel = true;
         std::vector<WinKeyEvent> plan;
         planKeyEdge(fr.recipe(U'|', false).key, true, altGr, plan);
-        CHECK(plan.size() == 9);
-        if (plan.size() == 9) {
-            CHECK(plan[0].vk == VK_MENU && plan[0].up && !plan[0].extended);
-            CHECK(plan[1].vk == VK_MENU && !plan[1].up && plan[1].extended);
-            CHECK(plan[2].vk == '6' && !plan[2].up);
-            CHECK(plan[3].vk == '6' && plan[3].up);
-            CHECK(plan[4].vk == kWinMaskVk && plan[5].vk == kWinMaskVk && plan[5].up);
-            CHECK(plan[6].vk == VK_MENU && plan[6].up && plan[6].extended);
-            CHECK(plan[7].vk == VK_CONTROL && !plan[7].up);
-            CHECK(plan[8].vk == VK_MENU && !plan[8].up && !plan[8].extended);
+        CHECK(plan.size() == 13);
+        if (plan.size() == 13) {
+            CHECK(plan[0].vk == kWinMaskVk && plan[1].vk == kWinMaskVk && plan[1].up);
+            CHECK(plan[2].vk == VK_MENU && plan[2].up && !plan[2].extended);
+            CHECK(plan[3].vk == VK_MENU && !plan[3].up && plan[3].extended);
+            CHECK(plan[4].vk == '6' && !plan[4].up);
+            CHECK(plan[5].vk == '6' && plan[5].up);
+            CHECK(plan[6].vk == kWinMaskVk && plan[7].vk == kWinMaskVk && plan[7].up);
+            CHECK(plan[8].vk == VK_MENU && plan[8].up && plan[8].extended);
+            CHECK(plan[9].vk == VK_CONTROL && !plan[9].up);
+            CHECK(plan[10].vk == VK_MENU && !plan[10].up && !plan[10].extended);
+            CHECK(plan[11].vk == kWinMaskVk && plan[12].vk == kWinMaskVk && plan[12].up);
         }
         planKeyEdge(fr.recipe(U'|', false).key, false, altGr, plan);
         CHECK(typeOut(fr, plan, false, altGr) == U"|");
@@ -418,15 +423,35 @@ void frenchLegacy(const WinKeyLayout& fr)
     }
     {
         // @: the left Ctrl and the RIGHT Alt around the à key, as AltGr is on
-        // a keyboard, released after it.
+        // a keyboard, released after it, with the mask before the right Alt
+        // goes up. Without it, an @ from a phone turned Notepad's KeyTips on
+        // (28/10/2026), as a US Mac's did through its keys (25/10/2026).
         std::vector<WinKeyEvent> plan;
         planText(fr, U"@", false, WinHeldMods{}, plan);
-        CHECK_EQ(plan.size(), static_cast<size_t>(6));
-        CHECK(plan.size() == 6 && plan[0].vk == VK_CONTROL && plan[0].scan == 0x1D &&
+        CHECK_EQ(plan.size(), static_cast<size_t>(8));
+        CHECK(plan.size() == 8 && plan[0].vk == VK_CONTROL && plan[0].scan == 0x1D &&
               !plan[0].extended && plan[1].vk == VK_MENU && plan[1].scan == 0x38 &&
-              plan[1].extended && plan[2].vk == '0' && plan[2].scan == 0x0B &&
-              plan[4].vk == VK_MENU && plan[4].up && plan[4].extended && plan[5].vk == VK_CONTROL &&
-              plan[5].up);
+              plan[1].extended && plan[2].vk == '0' && plan[2].scan == 0x0B && plan[3].up &&
+              plan[4].vk == kWinMaskVk && !plan[4].up && plan[5].vk == kWinMaskVk && plan[5].up &&
+              plan[6].vk == VK_MENU && plan[6].up && plan[6].extended && plan[7].vk == VK_CONTROL &&
+              plan[7].up);
+        CHECK(typeOut(fr, plan, false, WinHeldMods{}) == U"@");
+        CHECK(balanced(plan, WinHeldMods{}));
+    }
+    {
+        // Every right Alt that goes up from text is masked first: "@a{" lets
+        // go of the AltGr twice, and both are masked.
+        std::vector<WinKeyEvent> plan;
+        planText(fr, U"@a{", false, WinHeldMods{}, plan);
+        int masked = 0;
+        for (size_t i = 0; i < plan.size(); ++i) {
+            if (plan[i].vk != VK_MENU || !plan[i].up || !plan[i].extended) continue;
+            CHECK(i >= 2 && plan[i - 2].vk == kWinMaskVk && plan[i - 1].vk == kWinMaskVk &&
+                  plan[i - 1].up);
+            ++masked;
+        }
+        CHECK_EQ(masked, 2);
+        CHECK(typeOut(fr, plan, false, WinHeldMods{}) == U"@a{");
     }
     {
         // "aA": Shift only around the capital.
@@ -582,8 +607,8 @@ void unitedStates(const WinKeyLayout& us)
     }
 
     // A French AltGr's "@": the client says AltGr chose it, so its Ctrl and
-    // Alt go for Shift+2 here and come back after. Under Ctrl, Alt is no menu
-    // key: nothing to mask.
+    // Alt go for Shift+2 here and come back after. The Alt is masked both
+    // ways, under the Ctrl too: the client lets go of its Ctrl before its Alt.
     {
         WinHeldMods altGr;
         altGr.ctrl = altGr.alt = altGr.altLevel = true;
@@ -592,10 +617,18 @@ void unitedStates(const WinKeyLayout& us)
         planKeyEdge(us.recipe(U'@', false).key, false, altGr, plan);
         CHECK(typeOut(us, plan, false, altGr) == U"@");
         CHECK(balanced(plan, altGr));
-        bool masked = false;
-        for (const WinKeyEvent& e : plan)
-            masked = masked || e.vk == kWinMaskVk;
-        CHECK(!masked);
+        // Alt up, then down again: a key before the one, after the other.
+        int alts = 0;
+        for (size_t i = 0; i < plan.size(); ++i) {
+            if (plan[i].vk != VK_MENU) continue;
+            ++alts;
+            if (plan[i].up)
+                CHECK(i >= 2 && plan[i - 2].vk == kWinMaskVk && plan[i - 1].vk == kWinMaskVk);
+            else
+                CHECK(i + 2 < plan.size() && plan[i + 1].vk == kWinMaskVk &&
+                      plan[i + 2].vk == kWinMaskVk);
+        }
+        CHECK_EQ(alts, 2);
     }
 
     // An AZERTY keyboard's Shift held for "1", then "A" rolled over it: the
